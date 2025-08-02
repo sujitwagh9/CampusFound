@@ -19,11 +19,7 @@ export const addItem = async (req, res) => {
   const { type, title, description, category, location, status } = req.body;
 
   try {
-    // Prepare images from uploaded files
-    const images = req.files.map(file => ({
-      url: file.path,
-      public_id: file.filename
-    }));
+    
 
     const newItem = new Item({
       type,
@@ -31,7 +27,6 @@ export const addItem = async (req, res) => {
       description,
       category,
       location,
-      images,
       status,
       reportedBy: req.user.id
     });
