@@ -61,8 +61,17 @@ npm install
 Create a `.env` file in the backend directory and add the necessary configurations:
 
 ```env
-DATABASE_URL=your_database_url
-API_KEY=your_api_key
+PORT = 8080
+MONGODB_URL=your_mongoDB_url
+
+JWT_SECRET=""
+JWT_EXPIRE_IN=15m
+
+JWT_REFRESH_SECRET=""
+JWT_REFRESH_EXPIRE_IN=7d
+
+EMAIL_PASS=generated_pass
+EMAIL_USER=your_mail_id
 ```
 
 ### 4. Run the Application
