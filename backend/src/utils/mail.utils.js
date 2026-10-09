@@ -62,15 +62,39 @@ const send = ({ to, subject, ...content }) => {
     console.log(`[mail] disabled (test/MAIL_DISABLED), not sending "${subject}" to ${to}`);
     return Promise.resolve();
   }
+  const done = () => console.log(`[mail] "${subject}" sent to ${to}`);
+  const failed = (err) => console.error(`[mail] failed to send "${subject}" to ${to}:`, err.message);
+
+  if (config.mail.brevoApiKey) {
+    return sendViaBrevo({ to, subject, text, html }).then(done).catch(failed);
+  }
   if (!config.mail.user || !config.mail.pass) {
-    console.warn(`[mail] EMAIL_USER/EMAIL_PASS not set, skipping "${subject}" to ${to}`);
+    console.warn(`[mail] no mail provider configured (BREVO_API_KEY or EMAIL_USER/EMAIL_PASS), skipping "${subject}" to ${to}`);
     return Promise.resolve();
   }
   return transporter
-    .sendMail({ from: `"CampusFound" <${config.mail.user}>`, to, subject, text, html })
-    .then(() => console.log(`[mail] "${subject}" sent to ${to}`))
-    .catch((err) => console.error(`[mail] failed to send "${subject}" to ${to}:`, err.message));
+    .sendMail({ from: `"CampusFound" <${config.mail.from}>`, to, subject, text, html })
+    .then(done)
+    .catch(failed);
 };
+
+// Sends over HTTPS, which works on hosts that block SMTP ports
+async function sendViaBrevo({ to, subject, text, html }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': config.mail.brevoApiKey, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      sender: { name: 'CampusFound', email: config.mail.from },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: text,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Brevo responded ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
 
 // Confirmations of the user's own actions can be turned off in their profile
 const ACTIVITY_FOOTNOTE = 'You’re receiving this because activity emails are on. You can turn them off under Profile → Settings.';
@@ -230,8 +254,28 @@ export const sendPossibleMatchMail = (owner, lostItem, foundItem) =>
     details: [
       ['Found item', foundItem.title],
       ['Found at', foundItem.location],
+      ...(lostItem.match?.reasons ? [['Why it matched', lostItem.match.reasons.join(', ')]] : []),
     ],
-    action: { label: 'Is this yours?', url: itemLink(foundItem) },
+    // ?lost= links a resulting claim to this lost report so it closes automatically
+    action: { label: 'Is this yours?', url: `${itemLink(foundItem)}?lost=${lostItem._id}` },
+  });
+
+// A newly reported lost item looks like something this person found
+export const sendLostReportMatchMail = (finder, foundItem, lostItem) =>
+  send({
+    to: finder.email,
+    subject: `Someone may have lost the "${foundItem.title}" you found`,
+    heading: 'We may have found the owner',
+    lines: [
+      `Hi ${finder.username}, someone just reported losing something that looks like the “${foundItem.title}” you found.`,
+      'They’ve been shown your report and can claim it. An admin will verify their proof of ownership before anything is handed over.',
+    ],
+    details: [
+      ['They lost', lostItem.title],
+      ['Lost at', lostItem.location],
+      ...(foundItem.match?.reasons ? [['Why it matched', foundItem.match.reasons.join(', ')]] : []),
+    ],
+    action: { label: 'View your found item', url: itemLink(foundItem) },
   });
 
 /* ---------------------------------------------------------------- */
@@ -259,7 +303,7 @@ export const sendClaimRequestMail = (reporter, item, claimer) =>
     action: { label: 'View the item', url: itemLink(item) },
   });
 
-export const sendClaimDecisionMail = (claimant, item, approved) =>
+export const sendClaimDecisionMail = (claimant, item, approved, closedLostReport = null) =>
   send({
     to: claimant.email,
     subject: approved ? 'Claim approved' : 'Claim rejected',
@@ -268,6 +312,7 @@ export const sendClaimDecisionMail = (claimant, item, approved) =>
       approved
         ? `Hello ${claimant.username}, your claim for “${item.title}” has been approved. Please collect it from ${item.location} or the campus lost & found desk.`
         : `Hello ${claimant.username}, your claim for “${item.title}” was rejected by an admin. If you believe this is a mistake, please contact the lost & found desk.`,
+      ...(closedLostReport ? [`We’ve also marked your lost report “${closedLostReport.title}” as resolved, so you don’t need to do anything else.`] : []),
     ],
     action: { label: 'View your claims', url: link('/dashboard?tab=claims') },
   });

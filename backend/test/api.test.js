@@ -370,3 +370,78 @@ test('every action the user takes is confirmed by email (and the opt-out works)'
   await api().post('/api/logout-all').set(auth(login.body.accessToken));
   assert.deepEqual(subjectsFor(email, mark), ['You were signed out of all devices']);
 });
+
+test('matching understands synonyms and explains why', async () => {
+  const loser = await signup('specsowner');
+  const finder = await signup('specsfinder');
+  await reportItem(loser.accessToken, { type: 'lost', title: 'Lost specs', description: 'Thin metal frame', category: 'Accessories' });
+  const found = await reportItem(finder.accessToken, { title: 'Spectacles found', description: 'Gold rimmed pair', category: 'Accessories' });
+  assert.equal(found.body.matches.length, 1, 'specs ↔ spectacles should match');
+  assert.ok(found.body.matches[0].match.reasons.includes('Same place'));
+});
+
+test('matches in the same place rank higher', async () => {
+  const loser = await signup('rankowner');
+  const f1 = await signup('rankfinder1');
+  const f2 = await signup('rankfinder2');
+  const desc = 'Silver Casio calculator with a cracked solar panel';
+  await reportItem(f1.accessToken, { title: 'Casio calculator', description: desc, category: 'Electronics', location: 'Sports complex' });
+  await reportItem(f2.accessToken, { title: 'Casio calculator', description: desc, category: 'Electronics', location: 'Physics lab' });
+  const lost = await reportItem(loser.accessToken, { type: 'lost', title: 'Casio calculator', description: desc, category: 'Electronics', location: 'Physics lab, 1st floor' });
+  assert.equal(lost.body.matches.length, 2);
+  assert.equal(lost.body.matches[0].location, 'Physics lab');
+  assert.ok(lost.body.matches[0].match.score > lost.body.matches[1].match.score);
+});
+
+test('finders hear about lost reports that match what they found', async () => {
+  const { outbox } = await import('../src/utils/mail.utils.js');
+  const finder = await signup('earfinder');
+  const loser = await signup('earowner');
+  await reportItem(finder.accessToken, { title: 'White earbuds case', description: 'Charging case with one earbud inside', category: 'Electronics' });
+  const mark = outbox.length;
+  await reportItem(loser.accessToken, { type: 'lost', title: 'Lost my airpods', description: 'White charging case, one earbud missing', category: 'Electronics' });
+  const mail = outbox.slice(mark).find((m) => m.to === 'earfinder@campus.edu');
+  assert.ok(mail, 'finder should be emailed');
+  assert.match(mail.subject, /Someone may have lost the "White earbuds case" you found/);
+});
+
+test('approving a claim closes the claimant’s own lost report', async () => {
+  const { outbox } = await import('../src/utils/mail.utils.js');
+  const admin = await makeAdmin('alice');
+  const owner = await signup('walletowner');
+  const finder = await signup('walletfinder');
+
+  // Auto-linked: the claimant doesn't say which lost report it is
+  const lost = await reportItem(owner.accessToken, { type: 'lost', title: 'Brown leather wallet', description: 'Brown wallet with my metro card', category: 'Accessories' });
+  const found = await reportItem(finder.accessToken, { title: 'Leather wallet found', description: 'Brown leather wallet, metro card inside', category: 'Accessories' });
+  const claim = await api()
+    .post(`/api/items/${found.body.item._id}/claim-request`)
+    .set(auth(owner.accessToken))
+    .send({ message: 'The metro card has my photo on it' });
+  assert.equal(claim.body.claim.lostItem, lost.body.item._id, 'claim is linked to the owner’s lost report');
+
+  const mark = outbox.length;
+  await api().post(`/api/admin/claim-requests/${claim.body.claim._id}`).set(auth(admin.accessToken)).send({ action: 'approve' });
+  const lostAfter = await api().get(`/api/items/${lost.body.item._id}`);
+  assert.equal(lostAfter.body.item.status, 'resolved', 'lost report closes automatically');
+  const decision = outbox.slice(mark).find((m) => m.to === 'walletowner@campus.edu');
+  assert.match(decision.text, /also marked your lost report/);
+
+  // Explicitly linked via lostItemId (the "Is this yours?" button)
+  const lost2 = await reportItem(owner.accessToken, { type: 'lost', title: 'Black umbrella', description: 'Folding umbrella with a bent spoke', category: 'Other' });
+  const found2 = await reportItem(finder.accessToken, { title: 'Umbrella', description: 'Black folding umbrella', category: 'Other' });
+  const claim2 = await api()
+    .post(`/api/items/${found2.body.item._id}/claim-request`)
+    .set(auth(owner.accessToken))
+    .send({ message: 'One spoke is bent near the handle', lostItemId: lost2.body.item._id });
+  assert.equal(claim2.body.claim.lostItem, lost2.body.item._id);
+
+  // Someone else's report can't be linked
+  const other = await signup('walletother');
+  const found3 = await reportItem(finder.accessToken, { title: 'Grey hoodie', description: 'Grey hoodie with a college logo', category: 'Clothing' });
+  const claim3 = await api()
+    .post(`/api/items/${found3.body.item._id}/claim-request`)
+    .set(auth(other.accessToken))
+    .send({ message: 'It has my initials on the tag', lostItemId: lost2.body.item._id });
+  assert.equal(claim3.body.claim.lostItem, null);
+});

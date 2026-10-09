@@ -1,4 +1,5 @@
 import express from 'express'
+import mongoose from 'mongoose'
 import cors from 'cors'
 import helmet from 'helmet'
 import { config, cloudinaryEnabled } from './config.js'
@@ -15,6 +16,12 @@ app.set('trust proxy', 1) // correct client IPs for rate limiting behind a proxy
 app.use(helmet())
 app.use(cors({ origin: config.corsOrigins }))
 app.use(express.json({ limit: '100kb' }))
+
+// Used by Render's health checks and uptime monitors (which also keep a free instance awake)
+app.get('/api/health', (req, res) => {
+    const db = ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState] || 'unknown';
+    res.status(db === 'connected' ? 200 : 503).json({ ok: db === 'connected', db });
+});
 
 // Lets the frontend adapt to how this server is configured
 app.get('/api/meta', (req, res) => {

@@ -16,7 +16,8 @@ export const getAllClaimRequests = async (req, res) => {
       path: 'item',
       populate: { path: 'reportedBy', select: 'username email' },
     })
-    .populate('claimant', 'username email');
+    .populate('claimant', 'username email')
+    .populate('lostItem', 'title description location category status createdAt');
 
   res.json(claims);
 };
@@ -54,7 +55,7 @@ export const handleClaimRequest = async (req, res) => {
     { _id: claimRequestId, status: 'pending' },
     { status: approved ? 'approved' : 'rejected' },
     { new: true }
-  ).populate('claimant', 'username email');
+  ).populate('claimant', 'username email emailActivity');
 
   if (!claimRequest) {
     const exists = await ClaimRequest.exists({ _id: claimRequestId });
@@ -75,8 +76,18 @@ export const handleClaimRequest = async (req, res) => {
     }
     await item.save();
 
+    // The owner has their item back, so their own lost report is done too
+    let closedLostReport = null;
+    if (approved && claimRequest.lostItem) {
+      closedLostReport = await Item.findOneAndUpdate(
+        { _id: claimRequest.lostItem, reportedBy: claimRequest.claimant?._id, status: { $in: ['pending', 'under_review'] } },
+        { status: 'resolved' },
+        { new: true }
+      );
+    }
+
     if (approved && item.reportedBy) sendItemClaimedMail(item.reportedBy, item);
-    if (claimRequest.claimant) sendClaimDecisionMail(claimRequest.claimant, item, approved);
+    if (claimRequest.claimant) sendClaimDecisionMail(claimRequest.claimant, item, approved, closedLostReport);
   }
 
   res.json({ message: `Claim request ${approved ? 'approved' : 'rejected'} successfully` });

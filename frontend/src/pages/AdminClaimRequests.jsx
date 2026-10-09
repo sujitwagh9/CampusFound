@@ -235,6 +235,19 @@ export default function AdminClaimRequests() {
                           <span className="italic text-muted">No proof of ownership provided.</span>
                         )}
                       </blockquote>
+                      {claim.lostItem && (
+                        <div className="rounded-xl border border-dashed border-line-strong p-3 text-sm">
+                          <p className="text-[11px] font-bold tracking-[0.16em] uppercase text-lost-600 dark:text-lost-400">Their lost report</p>
+                          <Link to={`/items/${claim.lostItem._id}`} className="mt-1 block font-semibold hover:underline underline-offset-4">
+                            {claim.lostItem.title}
+                          </Link>
+                          <p className="text-muted line-clamp-2">{claim.lostItem.description}</p>
+                          <p className="mt-1 text-xs text-muted">
+                            Lost at {claim.lostItem.location} · reported {timeAgo(claim.lostItem.createdAt)}
+                            {claim.status === 'approved' && claim.lostItem.status === 'resolved' && ' · closed automatically'}
+                          </p>
+                        </div>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 mt-auto">
                         {claim.status === 'pending' && (
                           <>
