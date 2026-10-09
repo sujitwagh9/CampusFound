@@ -1,109 +1,141 @@
-import {ClaimRequest} from '../models/claimRequest.model.js';
-import {Item }from '../models/item.model.js';
-import {User} from '../models/user.model.js';
-import { sendEmailNotification } from '../utils/adminMail.util.js';
+import { ClaimRequest } from '../models/claimRequest.model.js';
+import { Item } from '../models/item.model.js';
+import { User } from '../models/user.model.js';
+import { sendClaimDecisionMail, sendItemClaimedMail } from '../utils/mail.utils.js';
 import { deleteUserService } from '../services/user.service.js';
-// Admin: Get all claim requests
+
+const CLAIM_STATUSES = ['pending', 'approved', 'rejected'];
+
 export const getAllClaimRequests = async (req, res) => {
-  try {
-    const claims = await ClaimRequest.find()
-  .populate({
-    path: 'item',
-    populate: { path: 'reportedBy', select: 'username email' }
-  })
-  .populate('claimant', 'username email');
+  const { status } = req.query;
+  const filter = CLAIM_STATUSES.includes(status) ? { status } : {};
 
-res.json(claims);
+  const claims = await ClaimRequest.find(filter)
+    .sort({ createdAt: -1 })
+    .populate({
+      path: 'item',
+      populate: { path: 'reportedBy', select: 'username email' },
+    })
+    .populate('claimant', 'username email');
 
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to fetch claim requests' });
-  }
+  res.json(claims);
+};
+
+export const getStats = async (req, res) => {
+  const [claimsByStatus, itemsByStatus, itemsByType, users] = await Promise.all([
+    ClaimRequest.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    Item.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    Item.aggregate([{ $group: { _id: { $toLower: '$type' }, count: { $sum: 1 } } }]),
+    User.countDocuments(),
+  ]);
+
+  const toObject = (rows) => Object.fromEntries(rows.map((r) => [r._id, r.count]));
+  const items = toObject(itemsByStatus);
+
+  res.json({
+    users,
+    claims: { pending: 0, approved: 0, rejected: 0, ...toObject(claimsByStatus) },
+    items: {
+      total: Object.values(items).reduce((a, b) => a + b, 0),
+      ...toObject(itemsByType),
+      byStatus: items,
+      returned: (items.claimed || 0) + (items.resolved || 0),
+    },
+  });
 };
 
 export const handleClaimRequest = async (req, res) => {
   const { claimRequestId } = req.params;
-  const { action } = req.body;  // 'approve' or 'reject'
+  const { action } = req.body; // validated: 'approve' | 'reject'
+  const approved = action === 'approve';
 
-  if (!['approve', 'reject'].includes(action)) {
-    return res.status(400).json({ message: 'Invalid action' });
+  // Atomic so the same claim can't be processed twice
+  const claimRequest = await ClaimRequest.findOneAndUpdate(
+    { _id: claimRequestId, status: 'pending' },
+    { status: approved ? 'approved' : 'rejected' },
+    { new: true }
+  ).populate('claimant', 'username email');
+
+  if (!claimRequest) {
+    const exists = await ClaimRequest.exists({ _id: claimRequestId });
+    return exists
+      ? res.status(400).json({ message: 'Claim request already processed' })
+      : res.status(404).json({ message: 'Claim request not found' });
   }
 
-  try {
-    const claimRequest = await ClaimRequest.findById(claimRequestId)
-      .populate('item')
-      .populate('claimant');
-
-    if (!claimRequest) {
-      return res.status(404).json({ message: 'Claim request not found' });
-    }
-
-    if (claimRequest.status !== 'pending') {
-      return res.status(400).json({ message: 'Claim request already processed' });
-    }
-
-    claimRequest.status = action === 'approve' ? 'approved' : 'rejected';
-    await claimRequest.save();
-
-    const item = await Item.findById(claimRequest.item._id).populate('reportedBy');
-
-    if (action === 'approve') {
+  const item = await Item.findById(claimRequest.item).populate('reportedBy', 'username email');
+  if (item) {
+    if (approved) {
       item.status = 'claimed';
-      await item.save();
-
-      // Notify Reporter
-      await sendEmailNotification(
-        item.reportedBy.email,
-        'Item Claimed Notification',
-        `Your reported item "${item.title}" has been successfully claimed.`
-      );
-
-      // Notify Claimant
-      await sendEmailNotification(
-        claimRequest.claimant.email,
-        'Claim Approved',
-        `Your claim request for item "${item.title}" has been approved by the admin.`
-      );
-
+      item.claimedBy = claimRequest.claimant?._id || null;
     } else {
-      // Notify Claimant about rejection
-      await sendEmailNotification(
-        claimRequest.claimant.email,
-        'Claim Rejected',
-        `Your claim request for item "${item.title}" has been rejected by the admin.`
-      );
+      // Rejected: release the item so the real owner can still claim it
+      item.status = 'pending';
+      item.claimedBy = null;
     }
+    await item.save();
 
-    res.json({ message: `Claim request ${action}d successfully` });
-
-  } catch (err) {
-    console.error('Error handling claim request:', err);
-    res.status(500).json({ message: 'Server error handling claim request' });
+    if (approved && item.reportedBy) sendItemClaimedMail(item.reportedBy, item);
+    if (claimRequest.claimant) sendClaimDecisionMail(claimRequest.claimant, item, approved);
   }
+
+  res.json({ message: `Claim request ${approved ? 'approved' : 'rejected'} successfully` });
 };
 
+export const deleteClaimRequest = async (req, res) => {
+  const claim = await ClaimRequest.findByIdAndDelete(req.params.claimRequestId);
+  if (!claim) {
+    return res.status(404).json({ message: 'Claim request not found' });
+  }
+
+  // Deleting a pending claim must not leave the item stuck in review
+  if (claim.status === 'pending') {
+    await Item.updateOne(
+      { _id: claim.item, status: 'under_review', claimedBy: claim.claimant },
+      { status: 'pending', claimedBy: null }
+    );
+  }
+
+  res.json({ message: 'Claim request deleted successfully' });
+};
 
 export const getAllUsers = async (req, res) => {
-  try {
-    const users = await User.find({}, 'username email role createdAt');
-    res.json(users);
-  } catch (err) {
-    console.error('Error fetching users:', err);
-    res.status(500).json({ message: 'Failed to fetch users' });
+  const users = await User.find({}, 'username email role createdAt').sort({ createdAt: -1 });
+  const counts = await Item.aggregate([{ $group: { _id: '$reportedBy', count: { $sum: 1 } } }]);
+  const countById = new Map(counts.map((c) => [c._id?.toString(), c.count]));
+
+  res.json(users.map((u) => ({ ...u.toJSON(), itemCount: countById.get(u._id.toString()) || 0 })));
+};
+
+export const updateUserRole = async (req, res) => {
+  const { userId } = req.params;
+  if (userId === req.user.id) {
+    return res.status(400).json({ message: 'You cannot change your own role' });
   }
-}
+
+  const user = await User.findByIdAndUpdate(
+    userId,
+    // Revoke sessions so the new role takes effect on next sign in
+    { role: req.body.role, refreshTokens: [] },
+    { new: true, projection: 'username email role createdAt' }
+  );
+  if (!user) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  res.json({ message: `${user.username} is now ${user.role === 'admin' ? 'an admin' : 'a user'}`, user });
+};
 
 export const deleteUser = async (req, res) => {
-  try {
-    const { userId } = req.params;  // from URL /users/:userId
-
-    const deletedUser = await deleteUserService(userId);  // service function to delete
-    if (!deletedUser) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.status(200).json({ message: 'User deleted successfully', user: deletedUser });
-  } catch (error) {
-    console.error('Failed to delete user:', error);
-    res.status(500).json({ message: 'Internal Server Error' });
+  const { userId } = req.params;
+  if (userId === req.user.id) {
+    return res.status(400).json({ message: 'You cannot delete your own account' });
   }
+
+  const deletedUser = await deleteUserService(userId);
+  if (!deletedUser) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+
+  res.status(200).json({ message: 'User deleted successfully' });
 };

@@ -1,7 +1,6 @@
-import moongose from 'mongoose'
-import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 
-const userSchema = new moongose.Schema(
+const userSchema = new mongoose.Schema(
     {
         username: {
             type: String,
@@ -13,7 +12,13 @@ const userSchema = new moongose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
+            lowercase: true
+        },
+        // Email confirmations of the user's own actions (security emails are always sent)
+        emailActivity: {
+            type: Boolean,
+            default: true
         },
         role: {
             type: String,
@@ -22,15 +27,25 @@ const userSchema = new moongose.Schema(
         },
         password: {
             type: String,
-            required: true
+            required: true,
+            select: false
         },
+        // SHA-256 hashes of the currently valid refresh tokens
+        refreshTokens: {
+            type: [String],
+            default: [],
+            select: false
+        },
+        // SHA-256 hash of the password reset token
         resetToken: {
             type: String,
-            default: null
+            default: null,
+            select: false
         },
-        resetTokenExpiry:{
+        resetTokenExpiry: {
             type: Date,
-            default: null
+            default: null,
+            select: false
         }
     },
     {
@@ -47,4 +62,4 @@ userSchema.set('toObject', { virtuals: true });
 userSchema.set('toJSON', { virtuals: true });
 
 
-export const User = moongose.model('User', userSchema);
+export const User = mongoose.model('User', userSchema);

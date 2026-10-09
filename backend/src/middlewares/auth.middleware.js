@@ -1,51 +1,37 @@
 import jwt from 'jsonwebtoken';
+import { config } from '../config.js';
 
+// 401 means "authenticate (again)" — the frontend refreshes the token on 401.
+// 403 is reserved for authenticated users who lack permission.
 const authMiddleware = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ message: 'Token missing in Authorization header' });
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme !== 'Bearer' || !token) {
+        return res.status(401).json({ message: 'Authentication required' });
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
+        const decoded = jwt.verify(token, config.jwt.secret);
         if (!decoded.id) {
-            return res.status(403).json({ message: 'Invalid token payload' });
+            return res.status(401).json({ message: 'Invalid token payload' });
         }
-
         req.user = decoded;
         next();
-    } catch (error) {
-        console.error('JWT verification error:', error);
-        return res.status(403).json({ message: 'Invalid or expired token' });
+    } catch {
+        return res.status(401).json({ message: 'Invalid or expired token' });
     }
 };
 
+// Attaches req.user when a valid token is present, but never rejects the request
+export const optionalAuth = (req, res, next) => {
+    const [scheme, token] = (req.headers.authorization || '').split(' ');
+    if (scheme === 'Bearer' && token) {
+        try {
+            req.user = jwt.verify(token, config.jwt.secret);
+        } catch {
+            // treat as anonymous
+        }
+    }
+    next();
+};
+
 export default authMiddleware;
-
-
-// import jwt from 'jsonwebtoken';
-
-
-// const authMiddleware = (req, res, next) => {
-    
-//     const token = req.headers.authorization?.split(' ')[1];
-//     if (!token) {
-//         return res.status(401).json({ message: 'No token provided' });
-//     }
-
-//     try {
-//         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-//         req.user = decoded; 
-//         next(); 
-//     } catch (error) {
-//         return res.status(403).json({ message: 'Invalid token' });
-//     }
-// };
-
-// export default authMiddleware;
