@@ -1,21 +1,15 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import Loader from '../components/Loader.jsx';  // Optional
 
 export default function AdminRoute({ children }) {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <Loader text="Checking admin access..." />;
-  }
+  const { user, isAdmin } = useAuth();
+  const location = useLocation();
 
   if (!user) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
-
-  if (user?.user?.role !== 'admin') {
-    return <Navigate to="/forbidden" />;
+  if (!isAdmin) {
+    return <Navigate to="/forbidden" replace />;
   }
-
   return children;
 }

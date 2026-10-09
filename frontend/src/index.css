@@ -1,2 +1,193 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/bricolage-grotesque";
 @import "tailwindcss";
+
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Design language: a campus lost & found noticeboard.
+   Warm paper, ink-black type, tag-yellow accent, vermilion for "lost" and
+   forest green for "found". Flat colour and crisp borders, no gradients or
+   glows; depth comes from hard offset shadows like paper notes on a board.
+   ------------------------------------------------------------------------ */
+:root {
+  --canvas: oklch(0.968 0.009 85);       /* paper */
+  --surface: oklch(0.993 0.004 85);
+  --surface-2: oklch(0.945 0.011 85);
+  --line: oklch(0.885 0.013 85);
+  --line-strong: oklch(0.78 0.016 80);
+  --fg: oklch(0.21 0.012 70);            /* ink */
+  --muted: oklch(0.47 0.016 70);
+
+  --accent: oklch(0.86 0.165 88);        /* tag yellow */
+  --accent-fg: oklch(0.21 0.012 70);
+  --accent-soft: oklch(0.95 0.06 92);
+  --accent-text: oklch(0.5 0.11 72);     /* readable amber for text on paper */
+
+  --hard: oklch(0.21 0.012 70);          /* colour of hard offset shadows */
+  --marker: var(--accent);               /* highlighter pen */
+  --ring: oklch(0.72 0.17 80 / 0.55);
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: oklch(0.175 0.006 70);
+  --surface: oklch(0.215 0.007 70);
+  --surface-2: oklch(0.255 0.008 70);
+  --line: oklch(0.315 0.009 70);
+  --line-strong: oklch(0.41 0.011 70);
+  --fg: oklch(0.95 0.008 85);
+  --muted: oklch(0.71 0.012 80);
+
+  --accent: oklch(0.86 0.165 88);
+  --accent-fg: oklch(0.21 0.012 70);
+  --accent-soft: oklch(0.86 0.165 88 / 0.13);
+  --accent-text: oklch(0.87 0.15 90);
+
+  --hard: oklch(0.08 0.004 70);
+  --marker: oklch(0.86 0.165 88 / 0.42); /* translucent so light text stays readable */
+  --ring: oklch(0.86 0.165 88 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+  --color-hard: var(--hard);
+}
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque Variable", "Inter Variable", ui-sans-serif, sans-serif;
+
+  /* Lost = vermilion, Found = forest green */
+  --color-lost-50: oklch(0.965 0.02 32);
+  --color-lost-100: oklch(0.925 0.045 32);
+  --color-lost-400: oklch(0.72 0.15 32);
+  --color-lost-500: oklch(0.63 0.19 32);
+  --color-lost-600: oklch(0.55 0.19 30);
+  --color-lost-900: oklch(0.33 0.09 30);
+  --color-found-50: oklch(0.965 0.025 155);
+  --color-found-100: oklch(0.925 0.05 155);
+  --color-found-400: oklch(0.75 0.13 155);
+  --color-found-500: oklch(0.6 0.12 155);
+  --color-found-600: oklch(0.5 0.1 155);
+  --color-found-900: oklch(0.3 0.05 155);
+
+  --radius-card: 1rem;
+
+  --shadow-soft: 0 1px 0 0 var(--line);
+  --shadow-hard: 3px 3px 0 0 var(--hard);
+  --shadow-hard-sm: 2px 2px 0 0 var(--hard);
+  --shadow-hard-lg: 5px 5px 0 0 var(--hard);
+  --shadow-pop: 6px 6px 0 0 var(--hard);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-sway: sway 5s ease-in-out infinite;
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  /* A pinned note moving gently, as if in a draught */
+  @keyframes sway {
+    0%, 100% { transform: rotate(-1.5deg); }
+    50% { transform: rotate(1.5deg); }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   ------------------------------------------------------------------------ */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-canvas text-fg font-sans;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.025em;
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  /* Keyboard focus ring follows each element's own border radius */
+  :focus-visible {
+    outline: 2px solid transparent;
+    box-shadow: 0 0 0 3px var(--ring);
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-[var(--radius-card)];
+  }
+
+  /* Paper note pinned to the board: crisp ink border and hard shadow */
+  .note {
+    @apply bg-surface border-[1.5px] border-hard rounded-xl shadow-[var(--shadow-hard)];
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-fg placeholder:text-muted/70
+      transition-[border-color,box-shadow] duration-200
+      hover:border-muted
+      focus:outline-none focus:border-fg focus:shadow-[0_0_0_4px_var(--ring)];
+  }
+  .field[aria-invalid="true"] {
+    @apply border-lost-500 focus:shadow-[0_0_0_4px_color-mix(in_oklch,var(--color-lost-500)_30%,transparent)];
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-lg;
+  }
+
+  /* Faint ruled lines, like a page from a notebook */
+  .bg-ruled {
+    background-image: linear-gradient(to bottom, color-mix(in oklch, var(--fg) 7%, transparent) 1px, transparent 1px);
+    background-size: 100% 2.25rem;
+  }
+
+  /* Highlighter-pen underline for emphasised words */
+  .marker {
+    background-image: linear-gradient(transparent 58%, var(--marker) 58%, var(--marker) 92%, transparent 92%);
+    background-repeat: no-repeat;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  /* Board surface behind pinned notes */
+  .board {
+    background-color: var(--surface-2);
+    background-image: radial-gradient(color-mix(in oklch, var(--fg) 10%, transparent) 1px, transparent 1.2px);
+    background-size: 18px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

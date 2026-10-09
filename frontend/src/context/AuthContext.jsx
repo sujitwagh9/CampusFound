@@ -1,45 +1,41 @@
-import { createContext, useState, useContext, useEffect } from 'react';
-import { toast } from 'react-toastify';
+import { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
+import { getSession, setSession, subscribe, updateSession } from '../api/session.js';
+import { logoutAPI } from '../api/userApi.js';
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [session, setSessionState] = useState(getSession);
 
-  useEffect(() => {
-    const storedUser = JSON.parse(localStorage.getItem('user'));
-    if (storedUser) {
-      setUser(storedUser);
-    }
-    setLoading(false);
+  // Stay in sync with token refreshes, forced logouts and other tabs
+  useEffect(() => subscribe(setSessionState), []);
+
+  const login = useCallback(({ accessToken, refreshToken, user }) => {
+    setSession({ accessToken, refreshToken, user });
   }, []);
 
-  const login = ({ accessToken, refreshToken, user }) => {
-    const userData = { accessToken, refreshToken, user };
-    setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
-  };
-
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('user');
+  const logout = useCallback(async () => {
+    const refreshToken = getSession()?.refreshToken;
+    setSession(null);
     toast.info('Logged out successfully');
-    window.location.href = '/login';
-  };
+    if (refreshToken) logoutAPI(refreshToken).catch(() => {});
+  }, []);
 
-  const updateAccessToken = (newToken) => {
-    if (!user) return;
-    const updatedUser = { ...user, accessToken: newToken };
-    setUser(updatedUser);
-    localStorage.setItem('user', JSON.stringify(updatedUser));
-  };
+  // Replace the signed-in user's details, e.g. after renaming
+  const updateUser = useCallback((nextUser) => updateSession({ user: nextUser }), []);
+
+  // Sign out locally without calling the API (used after "sign out everywhere")
+  const clearSession = useCallback(() => setSession(null), []);
+
+  const user = session?.user ?? null;
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, updateAccessToken }}>
+    <AuthContext.Provider value={{ user, isAdmin: user?.role === 'admin', login, logout, updateUser, clearSession }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

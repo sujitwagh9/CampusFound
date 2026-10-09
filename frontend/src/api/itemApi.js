@@ -1,68 +1,52 @@
-import api from './axois.js'; 
+import api from './client.js';
 
-
-const safeExtractItems = (res) => {
-  if (Array.isArray(res?.data)) return res.data;
-  if (Array.isArray(res?.data?.items)) return res.data.items;
-  return [];
-};
-
-export const getUserItems = async () => {
-  const res = await api.get('/user/items');
-  return safeExtractItems(res);
-};
-
-export const getAllItems = async () => {
-  const res = await api.get('/items');
-  return safeExtractItems(res);
-};
-
-
-export const updateItemStatus = async (itemId, email, newStatus) => {
-  const res = await api.put(`/update/${itemId}`, {
-    email,
-    status: newStatus,
+const toFormData = (data, images = []) => {
+  const form = new FormData();
+  Object.entries(data).forEach(([key, value]) => {
+    if (Array.isArray(value)) value.forEach((v) => form.append(key, v));
+    else if (value !== undefined && value !== null) form.append(key, value);
   });
-  return res.data;
+  images.forEach((file) => form.append('images', file));
+  return form;
 };
 
+export const getMeta = async () => (await api.get('/meta')).data;
 
-export const addItemAPI = async (itemData) => {
-  const res = await api.post('/add', itemData);
-  return res.data;
+// params: { q, type, category, status, sort, page, limit } -> { items, total, page, pages }
+export const getAllItems = async (params = {}) => {
+  const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v != null));
+  return (await api.get('/items', { params: clean })).data;
 };
 
+export const getItem = async (itemId) => (await api.get(`/items/${itemId}`)).data;
 
-export const claimItemRequest = async (itemId) => {
-  const res = await api.post(`/items/${itemId}/claim-request`);
-  return res.data;
-};
+export const getItemMatches = async (itemId) => (await api.get(`/items/${itemId}/matches`)).data;
 
+export const getUserItems = async () => (await api.get('/user/items')).data;
 
-export const fetchAdminClaimRequests = async () => {
-  const res = await api.get('/admin/claim-requests');
-  return res.data;
-};
+export const getUserClaims = async () => (await api.get('/user/claims')).data;
 
-export const handleAdminClaimRequest = async (claimRequestId, action) => {
-  const res = await api.post(`/admin/claim-requests/${claimRequestId}`, { action });
-  return res.data;
-};
+export const addItemAPI = async (itemData, images = []) =>
+  (await api.post('/items', toFormData(itemData, images))).data;
 
-export const deleteItemById = async (itemId) => {
-  const response = await api.delete(`/delete/${itemId}`);
-  return response.data;
-};
+export const updateItemAPI = async (itemId, itemData, images = []) =>
+  (await api.patch(`/items/${itemId}`, toFormData(itemData, images))).data;
 
-export const deleteClaimRequest = async (claimRequestId) => {
-  const response = await fetch(`/api/admin/claims/${claimRequestId}`, {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!response.ok) {
-    throw new Error('Failed to delete claim request');
-  }
-  return await response.json();
-};
+export const updateItemStatus = async (itemId, status) =>
+  (await api.patch(`/items/${itemId}`, { status })).data;
+
+export const deleteItemById = async (itemId) => (await api.delete(`/items/${itemId}`)).data;
+
+export const claimItemRequest = async (itemId, message) =>
+  (await api.post(`/items/${itemId}/claim-request`, { message })).data;
+
+export const fetchAdminStats = async () => (await api.get('/admin/stats')).data;
+
+export const fetchAdminClaimRequests = async (status) =>
+  (await api.get('/admin/claim-requests', { params: status ? { status } : {} })).data;
+
+export const handleAdminClaimRequest = async (claimRequestId, action) =>
+  (await api.post(`/admin/claim-requests/${claimRequestId}`, { action })).data;
+
+export const deleteClaimRequest = async (claimRequestId) =>
+  (await api.delete(`/admin/claim-requests/${claimRequestId}`)).data;
