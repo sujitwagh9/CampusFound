@@ -37,8 +37,9 @@ export const updateItemStatus = async (itemId, status) =>
 
 export const deleteItemById = async (itemId) => (await api.delete(`/items/${itemId}`)).data;
 
-export const claimItemRequest = async (itemId, message) =>
-  (await api.post(`/items/${itemId}/claim-request`, { message })).data;
+// lostItemId (optional) links the claim to the claimant's lost report so it closes on approval
+export const claimItemRequest = async (itemId, message, lostItemId) =>
+  (await api.post(`/items/${itemId}/claim-request`, { message, ...(lostItemId ? { lostItemId } : {}) })).data;
 
 export const fetchAdminStats = async () => (await api.get('/admin/stats')).data;
 

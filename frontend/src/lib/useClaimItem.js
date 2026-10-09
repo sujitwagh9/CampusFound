@@ -15,7 +15,7 @@ export default function useClaimItem() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  return async (item) => {
+  return async (item, { lostItemId } = {}) => {
     if (!user) {
       toast.info('Please sign in to claim this item');
       navigate('/login', { state: { from: location } });
@@ -32,7 +32,7 @@ export default function useClaimItem() {
     if (message === null) return false;
 
     try {
-      const res = await claimItemRequest(item._id, message);
+      const res = await claimItemRequest(item._id, message, lostItemId);
       toast.success(res.message || 'Claim request sent');
       return true;
     } catch (err) {

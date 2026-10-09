@@ -1,0 +1,59 @@
+# Render Blueprint: creates the API and the website from this repo.
+# Render dashboard → New → Blueprint → pick this repository.
+# Values marked `sync: false` are entered in the dashboard (never commit secrets).
+services:
+  # Express API
+  - type: web
+    name: campusfound-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    # --omit=dev skips test-only packages (e.g. the in-memory MongoDB download)
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGODB_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # Your website's address, e.g. https://campusfound-web.onrender.com (CORS + links in emails)
+      - key: FRONTEND_URL
+        sync: false
+      # Email over HTTPS (Render's free tier blocks SMTP)
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      # Optional: photo uploads
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+  # React website (static files)
+  - type: web
+    name: campusfound-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    # Single-page app: let React Router handle URLs like /items/123
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      # The API's address including /api, e.g. https://campusfound-api.onrender.com/api
+      - key: VITE_API_URL
+        sync: false

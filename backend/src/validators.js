@@ -75,6 +75,8 @@ export const claimSchema = z.object({
     .trim()
     .min(10, 'Describe something only the owner would know (at least 10 characters)')
     .max(1000),
+  // Optional: which of the claimant's lost reports this found item is
+  lostItemId: z.string().optional(),
 });
 
 export const claimDecisionSchema = z.object({

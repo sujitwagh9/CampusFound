@@ -5,6 +5,8 @@ const claimRequestSchema = new mongoose.Schema({
   claimant: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   // Proof of ownership written by the claimant (identifying marks, contents, etc.)
   message: { type: String, trim: true, maxlength: 1000, default: '' },
+  // The claimant's own lost report for this item; resolved automatically on approval
+  lostItem: { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
   status: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],

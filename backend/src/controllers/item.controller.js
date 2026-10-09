@@ -3,19 +3,16 @@ import { Item, ITEM_CATEGORIES, ITEM_STATUSES, ITEM_TYPES } from '../models/item
 import { User } from '../models/user.model.js';
 import { ClaimRequest } from '../models/claimRequest.model.js';
 import { destroyImages, uploadedImages, MAX_IMAGES } from '../middlewares/upload.middleware.js';
+import { findMatches, OPEN_STATUSES } from '../services/matching.service.js';
 import {
   sendClaimRequestMail, sendClaimSubmittedMail, sendItemDeletedMail, sendItemReportedMail, sendItemStatusByOwnerMail,
-  sendItemUpdatedMail, sendPossibleMatchMail, sendStatusChangeMail,
+  sendItemUpdatedMail, sendLostReportMatchMail, sendPossibleMatchMail, sendStatusChangeMail,
 } from '../utils/mail.utils.js';
 
 // Only the public profile of the reporter is exposed — never their email
 const REPORTER_FIELDS = '_id username';
-const OPEN_STATUSES = ['pending', 'under_review'];
 const MAIL_FIELDS = 'username email emailActivity';
 const FIELD_LABELS = { title: 'title', description: 'description', category: 'category', location: 'location' };
-// MongoDB text score below which a "match" is usually one coincidental word
-const MIN_MATCH_SCORE = 1;
-
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const isOwner = (item, user) => item.reportedBy?._id?.toString?.() === user.id || item.reportedBy?.toString?.() === user.id;
 const isAdmin = (user) => user?.role === 'admin';
@@ -25,35 +22,6 @@ const isAdmin = (user) => user?.role === 'admin';
 const discardUploads = (req) => destroyImages(uploadedImages(req.files));
 
 const typeFilter = (type) => new RegExp(`^${type}$`, 'i'); // matches legacy 'Lost'/'Found'
-
-/**
- * Finds open items of the opposite type that look similar to `item`.
- */
-export const findMatches = async (item, limit = 5) => {
-  const oppositeType = item.type.toLowerCase() === 'lost' ? 'found' : 'lost';
-  const filter = {
-    _id: { $ne: item._id },
-    type: typeFilter(oppositeType),
-    status: { $in: OPEN_STATUSES },
-    reportedBy: { $ne: item.reportedBy?._id || item.reportedBy },
-    $text: { $search: `${item.title} ${item.description}` },
-  };
-  // Same category, or "Other" on either side since people categorise differently
-  if (item.category && item.category !== 'Other') filter.category = { $in: [item.category, 'Other'] };
-
-  try {
-    const candidates = await Item.find(filter, { score: { $meta: 'textScore' } })
-      .sort({ score: { $meta: 'textScore' } })
-      .limit(limit)
-      .populate('reportedBy', REPORTER_FIELDS);
-    // Drop matches that share only a single common word (e.g. just "blue")
-    return candidates.filter((c) => c.get('score') >= MIN_MATCH_SCORE);
-  } catch (err) {
-    // e.g. the text index is still being built — matching is best-effort
-    console.error('[matches] lookup failed:', err.message);
-    return [];
-  }
-};
 
 export const getAllItem = async (req, res) => {
   const { q, type, category, status = 'all', sort = 'newest' } = req.query;
@@ -110,13 +78,17 @@ export const addItem = async (req, res) => {
 
   const matches = await findMatches(item);
 
-  // A newly found item may belong to someone who reported it lost: let them know
-  if (item.type === 'found' && matches.length) {
-    const owners = await User.find({ _id: { $in: matches.map((m) => m.reportedBy._id) } }, MAIL_FIELDS);
-    const ownerById = new Map(owners.map((o) => [o._id.toString(), o]));
-    matches.forEach((lost) => {
-      const owner = ownerById.get(lost.reportedBy._id.toString());
-      if (owner) sendPossibleMatchMail(owner, lost, item);
+  // Tell the people on the other side of each match:
+  //  - a new found item → owners of matching lost reports ("is this yours?")
+  //  - a new lost report → finders of matching items ("someone lost what you found")
+  if (matches.length) {
+    const people = await User.find({ _id: { $in: matches.map((m) => m.reportedBy._id) } }, MAIL_FIELDS);
+    const byId = new Map(people.map((u) => [u._id.toString(), u]));
+    matches.forEach((match) => {
+      const person = byId.get(match.reportedBy._id.toString());
+      if (!person) return;
+      if (item.type === 'found') sendPossibleMatchMail(person, match, item);
+      else sendLostReportMatchMail(person, match, item);
     });
   }
 
@@ -189,6 +161,25 @@ export const updateItem = async (req, res) => {
   res.json({ message: 'Item updated successfully', item });
 };
 
+/**
+ * The claimant's own open lost report for this found item, so it can be closed
+ * automatically when the claim is approved. Uses the report they chose (e.g.
+ * via "Is this yours?" on their lost report), otherwise the best match.
+ */
+const findClaimantLostReport = async (foundItem, claimantId, chosenId) => {
+  if (chosenId && mongoose.isValidObjectId(chosenId)) {
+    const chosen = await Item.findOne({
+      _id: chosenId,
+      reportedBy: claimantId,
+      type: typeFilter('lost'),
+      status: { $in: OPEN_STATUSES },
+    });
+    if (chosen) return chosen;
+  }
+  const [best] = await findMatches(foundItem, { limit: 1, onlyReporter: claimantId });
+  return best || null;
+};
+
 export const claimRequest = async (req, res) => {
   const itemId = req.params.id;
   if (!mongoose.isValidObjectId(itemId)) {
@@ -227,10 +218,13 @@ export const claimRequest = async (req, res) => {
     return res.status(409).json({ message: 'This item is already under review or has been claimed' });
   }
 
+  const lostItem = await findClaimantLostReport(item, req.user.id, req.body.lostItemId);
+
   const claim = await ClaimRequest.create({
     item: item._id,
     claimant: req.user.id,
     message: req.body.message,
+    lostItem: lostItem?._id || null,
   });
 
   const claimer = await User.findById(req.user.id, MAIL_FIELDS);

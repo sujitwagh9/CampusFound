@@ -36,6 +36,10 @@ export const config = {
     user: process.env.EMAIL_USER,
     // Gmail shows app passwords as "abcd efgh ijkl mnop"; the spaces are not part of it
     pass: process.env.EMAIL_PASS?.replace(/\s/g, ''),
+    // Brevo HTTP API: used instead of SMTP when set (Render's free tier blocks SMTP ports)
+    brevoApiKey: process.env.BREVO_API_KEY,
+    // Sender address; for Brevo it must be a sender verified in your Brevo account
+    from: process.env.MAIL_FROM || process.env.EMAIL_USER,
   },
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,

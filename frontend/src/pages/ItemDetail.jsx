@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -199,6 +199,9 @@ function StatusTimeline({ item }) {
 
 export default function ItemDetail() {
   const { id } = useParams();
+  // Set when arriving from "Is this yours?" on one of your lost reports
+  const [searchParams] = useSearchParams();
+  const fromLostReport = searchParams.get('lost');
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const claimItem = useClaimItem();
@@ -294,7 +297,7 @@ export default function ItemDetail() {
   };
 
   const handleClaim = async () => {
-    if (await claimItem(item)) load();
+    if (await claimItem(item, { lostItemId: fromLostReport })) load();
   };
 
   const claimNote = {
@@ -454,7 +457,17 @@ export default function ItemDetail() {
               {matches.map((m) => (
                 <motion.div key={m._id} variants={gridItem}>
                   <ItemCard item={m}>
-                    <Button size="sm" variant="soft" to={`/items/${m._id}`} iconRight={ChevronRight} className="w-full">
+                    {m.match?.reasons && (
+                      <ul className="w-full flex flex-wrap gap-1.5" aria-label="Why this matched">
+                        {m.match.reasons.map((r) => (
+                          <li key={r} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-accent-soft text-accent-text">
+                            {r}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {/* From a lost report, carry its id so a claim closes it automatically */}
+                    <Button size="sm" variant="soft" to={found ? `/items/${m._id}` : `/items/${m._id}?lost=${item._id}`} iconRight={ChevronRight} className="w-full">
                       {found ? 'View lost report' : 'Is this yours?'}
                     </Button>
                   </ItemCard>
