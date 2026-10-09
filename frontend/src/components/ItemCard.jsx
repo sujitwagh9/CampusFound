@@ -1,110 +1,83 @@
-import {
-  BadgeCheck, AlertTriangle, Hourglass, CheckCircle,
-  Search, ThumbsUp, ThumbsDown, Trash2
-} from 'lucide-react';
-import { useAuth } from '../context/AuthContext.jsx';
+import { Link } from 'react-router-dom';
+import { motion } from 'motion/react';
+import { MapPin, Clock } from 'lucide-react';
+import { StatusBadge, TypeBadge } from './Badges.jsx';
+import { categoryLabel, isFound, timeAgo, formatDate } from '../lib/format.js';
+import { CategoryIcon } from '../lib/categoryIcons.jsx';
 
-export default function ItemCard({
-  item,
-  showStatusUpdate = false,
-  onStatusUpdate,
-  showClaimButton = false,
-  onClaimRequest,
-  onDeleteItem
-}) {
-  const { user } = useAuth();
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case 'claimed':
-        return { bg: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300', icon: <BadgeCheck size={16} />, label: 'Claimed' };
-      case 'under_review':
-        return { bg: 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300', icon: <Hourglass size={16} />, label: 'Under Review' };
-      case 'resolved':
-        return { bg: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300', icon: <CheckCircle size={16} />, label: 'Resolved' };
-      default:
-        return { bg: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300', icon: <AlertTriangle size={16} />, label: 'Pending' };
-    }
-  };
-
-  const statusBadge = getStatusBadge(item.status);
-  const isAdmin = user?.user?.role === 'admin';
-  const isOwner = user?.user?.id === item.reportedBy?._id;
+/**
+ * Compact item summary. Page-specific actions are passed as `children` and
+ * rendered in the footer.
+ */
+export default function ItemCard({ item, children }) {
+  const image = item.images?.[0]?.url;
+  const found = isFound(item);
 
   return (
-    <div className="bg-white dark:bg-[#161b22] text-gray-900 dark:text-gray-100 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 hover:shadow-lg transition p-6 space-y-4">
-      
-      <div className="flex items-center justify-between">
-        <h3 className="text-xl font-bold">{item.title}</h3>
-        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${statusBadge.bg}`}>
-          {statusBadge.icon}
-          {statusBadge.label}
-        </span>
-      </div>
-
-      <hr className="border-gray-300 dark:border-gray-600"/>
-
-      <div>
-        <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-1">Description</h4>
-        <p className="text-sm text-gray-600 dark:text-gray-400">{item.description}</p>
-      </div>
-
-      <div>
-        <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-1">Details</h4>
-        <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-          <li><strong>Type:</strong> {item.type}</li>
-          <li><strong>Location:</strong> {item.location}</li>
-          <li><strong>Reported Date:</strong> {new Date(item.createdAt).toLocaleDateString()}</li>
-          <li><strong>Reported By:</strong> {item.reportedBy?.username || 'Unknown'}</li>
-        </ul>
-      </div>
-
-      <hr className="border-gray-300 dark:border-gray-600"/>
-
-      {isAdmin && showStatusUpdate && (
-        <div className="flex gap-3 flex-wrap mt-3">
-          <button
-            onClick={() => onStatusUpdate(item._id, 'approve')}
-            className="inline-flex items-center gap-1 px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition"
+    <motion.article
+      whileHover={{ y: -3, x: -3 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      className="group relative flex flex-col h-full card overflow-hidden hover:border-hard hover:shadow-[var(--shadow-hard-lg)] transition-[box-shadow,border-color] duration-200"
+    >
+      <Link to={`/items/${item._id}`} className="relative block aspect-[4/3] overflow-hidden bg-surface-2" tabIndex={-1} aria-hidden="true">
+        {image ? (
+          <img
+            src={image}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover transition-transform duration-700 ease-[var(--ease-out-expo)] group-hover:scale-[1.06]"
+          />
+        ) : (
+          <div
+            className={`h-full w-full flex flex-col items-center justify-center gap-2 bg-ruled ${
+              found
+                ? 'bg-found-50 dark:bg-found-500/10 text-found-600/60 dark:text-found-400/70'
+                : 'bg-lost-50 dark:bg-lost-500/10 text-lost-600/60 dark:text-lost-400/70'
+            }`}
           >
-            <ThumbsUp size={16} /> Approve
-          </button>
-          <button
-            onClick={() => onStatusUpdate(item._id, 'reject')}
-            className="inline-flex items-center gap-1 px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition"
-          >
-            <ThumbsDown size={16} /> Reject
-          </button>
+            <CategoryIcon category={item.category} size={44} strokeWidth={1.4} className="transition-transform duration-500 group-hover:scale-110 group-hover:-rotate-6" />
+            <span className="sr-only">No photo</span>
+          </div>
+        )}
+        {image && <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/30 to-transparent pointer-events-none" />}
+        <div className="absolute top-3 left-3">
+          <TypeBadge item={item} />
         </div>
-      )}
-
-      {(showClaimButton || isAdmin || isOwner) && (
-        <div className="flex flex-wrap gap-3 items-center mt-3">
-          {showClaimButton && user?.user?.role !== 'admin' && item.status === 'pending' && item.type === 'found' && (
-            <button
-              onClick={() => onClaimRequest(item)}
-              className="inline-flex items-center gap-1 px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-            >
-              Claim This Item
-            </button>
-          )}
-
-          {showClaimButton && item.type !== 'found' && (
-            <p className="text-xs text-gray-500 italic flex items-center gap-1">
-              <Search size={14} /> Only <strong>"found"</strong> items can be claimed.
-            </p>
-          )}
-
-          {(isAdmin || isOwner) && (
-            <button
-              onClick={() => onDeleteItem(item._id)}
-              className="inline-flex items-center gap-1 px-4 py-2 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition"
-            >
-              <Trash2 size={16} /> Delete Item
-            </button>
-          )}
+        <div className="absolute top-3 right-3">
+          <StatusBadge status={item.status} />
         </div>
-      )}
-    </div>
+      </Link>
+
+      <div className="flex flex-col flex-1 p-4 gap-1.5">
+        <p className="text-xs font-medium text-muted inline-flex items-center gap-1.5">
+          <CategoryIcon category={item.category} size={13} />
+          {categoryLabel(item.category)}
+        </p>
+        <h3 className="text-[17px] font-semibold leading-snug line-clamp-2">
+          <Link to={`/items/${item._id}`} className="after:absolute after:inset-0 after:content-[''] focus:outline-none hover:underline underline-offset-4 decoration-accent decoration-2 transition-colors">
+            {item.title}
+          </Link>
+        </h3>
+        <p className="text-sm text-muted line-clamp-2 leading-relaxed">{item.description}</p>
+
+        <div className="mt-auto pt-3 flex items-center gap-3 text-xs text-muted">
+          <span className="inline-flex items-center gap-1 min-w-0">
+            <MapPin size={13} className="shrink-0" aria-hidden="true" />
+            <span className="truncate">{item.location}</span>
+          </span>
+          <span className="inline-flex items-center gap-1 shrink-0 ml-auto">
+            <Clock size={13} aria-hidden="true" />
+            <time dateTime={item.createdAt} title={formatDate(item.createdAt)}>
+              {timeAgo(item.createdAt)}
+            </time>
+          </span>
+        </div>
+
+        {children && (
+          // relative + z-10 keeps the buttons clickable above the card-wide link
+          <div className="relative z-10 flex flex-wrap items-center gap-2 pt-3 mt-2 border-t border-line">{children}</div>
+        )}
+      </div>
+    </motion.article>
   );
 }

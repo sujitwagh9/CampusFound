@@ -1,112 +1,84 @@
-import { useAuth } from '../context/AuthContext.jsx';
-import { useNavigate, Link } from 'react-router-dom';
 import { useState } from 'react';
+import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext.jsx';
+import { loginAPI } from '../api/userApi.js';
+import { errorMessage } from '../api/client.js';
+import AuthCard from '../components/AuthCard.jsx';
+import FormField, { PasswordInput, SubmitButton } from '../components/FormField.jsx';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  // Shown once, e.g. after the session expired
+  const [error, setError] = useState(() => {
+    const message = sessionStorage.getItem('authMessage');
+    sessionStorage.removeItem('authMessage');
+    return message || '';
+  });
+
+  const from = location.state?.from;
+  const redirectTo = from ? `${from.pathname}${from.search || ''}` : null;
+
+  if (user && !submitting) {
+    return <Navigate to={redirectTo || '/explore'} replace />;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
+    setSubmitting(true);
     try {
-      const res = await fetch('http://localhost:8080/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok && data.accessToken) {
-        login({
-          accessToken: data.accessToken,
-          refreshToken: data.refreshToken,
-          user: data.user,
-        });
-        navigate(data.user.role === 'admin' ? '/' : '/');
-      } else {
-        setError(data.message || 'Invalid email or password.');
-      }
+      const data = await loginAPI({ email, password });
+      login(data);
+      navigate(redirectTo || (data.user.role === 'admin' ? '/admin/claim-requests' : '/explore'), { replace: true });
     } catch (err) {
-      console.error('Login Error:', err);
-      setError('Something went wrong. Please try again later.');
+      setError(errorMessage(err, 'Unable to sign in. Please try again.'));
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-black flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white dark:bg-[#161b22] border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-8">
-        <h2 className="text-gray-600 dark:text-gray-400 text-sm text-center mb-2">Welcome back</h2>
-        <h1 className="text-3xl font-bold text-center text-gray-900 dark:text-white mb-6">Sign in</h1>
-
-        {error && (
-          <div className="mb-5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-300 dark:border-red-600/40 rounded-lg px-4 py-3 text-sm text-center">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email address"
-            required
-            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-
-          <input
-            type="password"
-            placeholder="Password"
-            required
-            className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-
-          <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" className="form-checkbox text-blue-600 dark:bg-gray-900" />
-              Remember me
-            </label>
-            <Link to="/forgot-password" className="text-blue-600 dark:text-blue-400 hover:underline">
-              Forgot password?
-            </Link>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition"
-          >
-            Sign In
-          </button>
-
-          <div className="relative py-2 text-center text-sm text-gray-500 dark:text-gray-400">
-            <span className="absolute inset-x-0 top-1/2 h-px bg-gray-300 dark:bg-gray-700" />
-            <span className="bg-white dark:bg-[#161b22] px-4 relative z-10">or</span>
-          </div>
-
-          <button
-            type="button"
-            className="w-full flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600 py-3 rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-          >
-            <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5" />
-            Sign in with Google
-          </button>
-        </form>
-
-        <p className="mt-6 text-sm text-center text-gray-600 dark:text-gray-400">
+    <AuthCard
+      eyebrow="Welcome back"
+      title="Sign in"
+      subtitle={from ? 'Please sign in to continue.' : undefined}
+      error={error}
+      footer={
+        <>
           Don’t have an account?{' '}
-          <Link to="/signup" className="text-blue-600 dark:text-blue-400 font-medium hover:underline">
+          <Link to="/signup" state={location.state} className="font-semibold text-accent-text hover:underline underline-offset-4">
             Sign up
           </Link>
-        </p>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <FormField label="Email address">
+          {(props) => (
+            <input {...props} type="email" autoComplete="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+          )}
+        </FormField>
+
+        <FormField label="Password">
+          {(props) => (
+            <PasswordInput {...props} autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          )}
+        </FormField>
+
+        <div className="flex justify-end text-sm">
+          <Link to="/forgot-password" className="font-medium text-accent-text hover:underline underline-offset-4">
+            Forgot password?
+          </Link>
+        </div>
+
+        <SubmitButton loading={submitting} loadingText="Signing in…">
+          Sign in
+        </SubmitButton>
+      </form>
+    </AuthCard>
   );
 }

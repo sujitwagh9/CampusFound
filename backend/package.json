@@ -5,24 +5,32 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/index.js"
+    "test": "NODE_ENV=test MAIL_DISABLED=true node --test test/",
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "make-admin": "node scripts/make-admin.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.5",
-    "crypto": "^1.0.1",
     "dotenv": "^17.0.1",
     "express": "^5.1.0",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.1",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
-    "nodemailer": "^7.0.4"
+    "nodemailer": "^7.0.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.4.3",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.1"
   }
 }

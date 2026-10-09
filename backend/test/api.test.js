@@ -1,0 +1,372 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
+import request from 'supertest';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+
+let mongod, app, User;
+
+before(async () => {
+  mongod = await MongoMemoryServer.create();
+  process.env.NODE_ENV = 'test';
+  process.env.MONGODB_URL = mongod.getUri();
+  process.env.JWT_SECRET = 'test-secret';
+  process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
+  // Imported after the environment is set, since config reads it on load
+  app = (await import('../src/app.js')).default;
+  User = (await import('../src/models/user.model.js')).User;
+  await mongoose.connect(process.env.MONGODB_URL);
+  await mongoose.model('Item').syncIndexes();
+});
+
+after(async () => {
+  await mongoose.disconnect();
+  await mongod.stop();
+});
+
+const api = () => request(app);
+const auth = (token) => ({ Authorization: `Bearer ${token}` });
+
+const signup = async (username) => {
+  const res = await api()
+    .post('/api/signup')
+    .send({ username, email: `${username}@campus.edu`, password: 'password123' });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  return res.body;
+};
+
+const makeAdmin = async (username) => {
+  await User.updateOne({ username }, { role: 'admin' });
+  const res = await api().post('/api/login').send({ email: `${username}@campus.edu`, password: 'password123' });
+  return res.body;
+};
+
+const reportItem = (token, overrides = {}) =>
+  api()
+    .post('/api/items')
+    .set(auth(token))
+    .send({
+      type: 'found',
+      title: 'Black leather wallet',
+      description: 'Black wallet with a student card inside',
+      category: 'Accessories',
+      location: 'Library 2nd floor',
+      ...overrides,
+    });
+
+test('signup ignores a client-supplied admin role', async () => {
+  const res = await api()
+    .post('/api/signup')
+    .send({ username: 'mallory', email: 'mallory@campus.edu', password: 'password123', role: 'admin' });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.user.role, 'user');
+});
+
+test('signup validates input', async () => {
+  const res = await api().post('/api/signup').send({ username: 'x', email: 'bad', password: '1' });
+  assert.equal(res.status, 400);
+  assert.ok(res.body.errors.length >= 3);
+});
+
+test('login does not reveal whether an email exists', async () => {
+  await signup('alice');
+  const unknown = await api().post('/api/login').send({ email: 'nobody@campus.edu', password: 'password123' });
+  const wrong = await api().post('/api/login').send({ email: 'alice@campus.edu', password: 'wrongpass1' });
+  assert.equal(unknown.status, 401);
+  assert.equal(wrong.status, 401);
+  assert.equal(unknown.body.message, wrong.body.message);
+});
+
+test('forgot-password responds the same for unknown emails', async () => {
+  const known = await api().post('/api/forgot-password').send({ email: 'alice@campus.edu' });
+  const unknown = await api().post('/api/forgot-password').send({ email: 'nobody@campus.edu' });
+  assert.equal(known.status, 200);
+  assert.deepEqual(known.body, unknown.body);
+});
+
+test('refresh tokens rotate and are revoked on logout', async () => {
+  const { refreshToken } = await signup('bob');
+  const refreshed = await api().post('/api/refresh').send({ refreshToken });
+  assert.equal(refreshed.status, 200);
+
+  const reused = await api().post('/api/refresh').send({ refreshToken });
+  assert.equal(reused.status, 401, 'a rotated refresh token must not be reusable');
+
+  await api().post('/api/logout').send({ refreshToken: refreshed.body.refreshToken });
+  const afterLogout = await api().post('/api/refresh').send({ refreshToken: refreshed.body.refreshToken });
+  assert.equal(afterLogout.status, 401);
+});
+
+test('expired/invalid access tokens get 401, not 403', async () => {
+  const res = await api().get('/api/user/items').set(auth('garbage'));
+  assert.equal(res.status, 401);
+});
+
+test('item creation validates category and strips forbidden fields', async () => {
+  const { accessToken } = await signup('carol');
+  const bad = await reportItem(accessToken, { category: '' });
+  assert.equal(bad.status, 400);
+
+  const ok = await reportItem(accessToken, { type: 'Found', status: 'claimed', reportedBy: '000000000000000000000000' });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.item.type, 'found');
+  assert.equal(ok.body.item.status, 'pending');
+});
+
+test('owners cannot mass-assign protected fields on update', async () => {
+  const { accessToken } = await signup('dave');
+  const { body } = await reportItem(accessToken);
+  const res = await api()
+    .patch(`/api/items/${body.item._id}`)
+    .set(auth(accessToken))
+    .send({ title: 'Brown leather wallet', status: 'claimed', reportedBy: '000000000000000000000000' });
+  assert.equal(res.status, 400, 'status "claimed" is not allowed for owners');
+
+  const ok = await api()
+    .patch(`/api/items/${body.item._id}`)
+    .set(auth(accessToken))
+    .send({ title: 'Brown leather wallet', reportedBy: '000000000000000000000000' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.item.title, 'Brown leather wallet');
+  assert.equal(ok.body.item.reportedBy.username, 'dave');
+});
+
+test('public item list hides reporter emails and supports filters', async () => {
+  const res = await api().get('/api/items?type=found&q=wallet');
+  assert.equal(res.status, 200);
+  assert.ok(res.body.items.length > 0);
+  for (const item of res.body.items) {
+    assert.equal(item.reportedBy.email, undefined);
+    assert.equal(item.type, 'found');
+  }
+  assert.ok(res.body.total >= res.body.items.length);
+});
+
+test('claim workflow: proof required, reject releases item, approve claims it', async () => {
+  const finder = await signup('finder');
+  const owner = await signup('owner');
+  const other = await signup('other');
+  const admin = await makeAdmin('alice');
+
+  const { body } = await reportItem(finder.accessToken, { title: 'Blue water bottle', description: 'Steel bottle with stickers' });
+  const itemId = body.item._id;
+
+  const noProof = await api().post(`/api/items/${itemId}/claim-request`).set(auth(other.accessToken)).send({});
+  assert.equal(noProof.status, 400);
+
+  const own = await api()
+    .post(`/api/items/${itemId}/claim-request`)
+    .set(auth(finder.accessToken))
+    .send({ message: 'It has a sticker of a cat on it' });
+  assert.equal(own.status, 400);
+
+  const claim1 = await api()
+    .post(`/api/items/${itemId}/claim-request`)
+    .set(auth(other.accessToken))
+    .send({ message: 'It has a sticker of a cat on it' });
+  assert.equal(claim1.status, 201);
+
+  const dup = await api()
+    .post(`/api/items/${itemId}/claim-request`)
+    .set(auth(owner.accessToken))
+    .send({ message: 'It has my name engraved on the bottom' });
+  assert.equal(dup.status, 409, 'item is under review');
+
+  const nonAdmin = await api().get('/api/admin/claim-requests').set(auth(other.accessToken));
+  assert.equal(nonAdmin.status, 403);
+
+  const reject = await api()
+    .post(`/api/admin/claim-requests/${claim1.body.claim._id}`)
+    .set(auth(admin.accessToken))
+    .send({ action: 'reject' });
+  assert.equal(reject.status, 200);
+
+  const afterReject = await api().get(`/api/items/${itemId}`);
+  assert.equal(afterReject.body.item.status, 'pending', 'rejected claim must release the item');
+
+  const retry = await api()
+    .post(`/api/items/${itemId}/claim-request`)
+    .set(auth(other.accessToken))
+    .send({ message: 'Trying again with the same story' });
+  assert.equal(retry.status, 400, 'rejected claimant cannot re-claim');
+
+  const claim2 = await api()
+    .post(`/api/items/${itemId}/claim-request`)
+    .set(auth(owner.accessToken))
+    .send({ message: 'It has my name engraved on the bottom' });
+  assert.equal(claim2.status, 201);
+
+  const approve = await api()
+    .post(`/api/admin/claim-requests/${claim2.body.claim._id}`)
+    .set(auth(admin.accessToken))
+    .send({ action: 'approve' });
+  assert.equal(approve.status, 200);
+
+  const final = await api().get(`/api/items/${itemId}`).set(auth(owner.accessToken));
+  assert.equal(final.body.item.status, 'claimed');
+  assert.equal(final.body.myClaim.status, 'approved');
+
+  const myClaims = await api().get('/api/user/claims').set(auth(owner.accessToken));
+  assert.equal(myClaims.body.length, 1);
+});
+
+test('reporting a found item returns matching lost reports', async () => {
+  const loser = await signup('loser');
+  const finder = await signup('finder2');
+  await reportItem(loser.accessToken, {
+    type: 'lost',
+    title: 'Lost silver laptop charger',
+    description: 'Dell laptop charger left in lab',
+    category: 'Electronics',
+  });
+  const found = await reportItem(finder.accessToken, {
+    title: 'Laptop charger found',
+    description: 'Dell charger found in the computer lab',
+    category: 'Electronics',
+  });
+  assert.equal(found.status, 201);
+  assert.equal(found.body.matches.length, 1);
+  assert.equal(found.body.matches[0].title, 'Lost silver laptop charger');
+});
+
+test('admins cannot delete themselves; deleting a user removes their items', async () => {
+  const admin = await makeAdmin('alice');
+  const self = await api().delete(`/api/admin/users/${admin.user.id}`).set(auth(admin.accessToken));
+  assert.equal(self.status, 400);
+
+  const victim = await signup('victim');
+  await reportItem(victim.accessToken, { title: 'Victim umbrella', description: 'Red umbrella with a wooden handle' });
+  const del = await api().delete(`/api/admin/users/${victim.user.id}`).set(auth(admin.accessToken));
+  assert.equal(del.status, 200);
+
+  const items = await api().get('/api/items?q=Victim umbrella');
+  assert.equal(items.body.total, 0);
+});
+
+test('demoted admins lose access immediately', async () => {
+  const admin = await makeAdmin('alice');
+  const target = await signup('tempadmin');
+  await api().patch(`/api/admin/users/${target.user.id}/role`).set(auth(admin.accessToken)).send({ role: 'admin' });
+  const promoted = await api().post('/api/login').send({ email: 'tempadmin@campus.edu', password: 'password123' });
+  assert.equal((await api().get('/api/admin/stats').set(auth(promoted.body.accessToken))).status, 200);
+
+  await api().patch(`/api/admin/users/${target.user.id}/role`).set(auth(admin.accessToken)).send({ role: 'user' });
+  assert.equal((await api().get('/api/admin/stats').set(auth(promoted.body.accessToken))).status, 403);
+});
+
+test('a single shared word is not reported as a match', async () => {
+  const finder = await signup('finder3');
+  const loser = await signup('loser3');
+  await reportItem(loser.accessToken, {
+    type: 'lost',
+    title: 'Black HP charger',
+    description: 'Charger with blue tape on the cable',
+    category: 'Electronics',
+  });
+  const found = await reportItem(finder.accessToken, {
+    title: 'Blue Milton water bottle',
+    description: 'Steel bottle with stickers, left near the canteen',
+    category: 'Other',
+  });
+  assert.equal(found.status, 201);
+  // Shares only the word "blue" with the lost charger
+  assert.equal(found.body.matches.length, 0);
+});
+
+test('tests can never send real email', async () => {
+  const { config } = await import('../src/config.js');
+  assert.equal(config.mail.disabled, true);
+});
+
+test('profile: rename, change password, sign out everywhere', async () => {
+  const me = await signup('profiler');
+  await signup('takenname');
+
+  const taken = await api().patch('/api/profile').set(auth(me.accessToken)).send({ username: 'TakenName' });
+  assert.equal(taken.status, 409);
+
+  const renamed = await api().patch('/api/profile').set(auth(me.accessToken)).send({ username: 'profiler2', role: 'admin' });
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.body.user.username, 'profiler2');
+  assert.equal(renamed.body.user.role, 'user', 'role cannot be changed through the profile');
+
+  const wrong = await api()
+    .post('/api/profile/password')
+    .set(auth(me.accessToken))
+    .send({ currentPassword: 'nope12345', newPassword: 'newpassword1' });
+  assert.equal(wrong.status, 400);
+
+  const changed = await api()
+    .post('/api/profile/password')
+    .set(auth(me.accessToken))
+    .send({ currentPassword: 'password123', newPassword: 'newpassword1' });
+  assert.equal(changed.status, 200);
+  assert.ok(changed.body.refreshToken, 'this device gets a fresh session');
+
+  const oldSession = await api().post('/api/refresh').send({ refreshToken: me.refreshToken });
+  assert.equal(oldSession.status, 401, 'other sessions are revoked after a password change');
+
+  const login = await api().post('/api/login').send({ email: 'profiler@campus.edu', password: 'newpassword1' });
+  assert.equal(login.status, 200);
+
+  await api().post('/api/logout-all').set(auth(login.body.accessToken));
+  const afterAll = await api().post('/api/refresh').send({ refreshToken: login.body.refreshToken });
+  assert.equal(afterAll.status, 401);
+});
+
+test('every action the user takes is confirmed by email (and the opt-out works)', async () => {
+  const { outbox } = await import('../src/utils/mail.utils.js');
+  const subjectsFor = (email, since) => outbox.slice(since).filter((m) => m.to === email).map((m) => m.subject);
+
+  let mark = outbox.length;
+  const me = await signup('mailer');
+  const email = 'mailer@campus.edu';
+  assert.deepEqual(subjectsFor(email, mark), ['Welcome to CampusFound']);
+
+  mark = outbox.length;
+  const { body } = await reportItem(me.accessToken, { title: 'Red umbrella', description: 'Folding umbrella with wooden handle' });
+  const itemId = body.item._id;
+  await api().patch(`/api/items/${itemId}`).set(auth(me.accessToken)).send({ location: 'Main Gate' });
+  await api().patch(`/api/items/${itemId}`).set(auth(me.accessToken)).send({ status: 'resolved' });
+  await api().patch(`/api/items/${itemId}`).set(auth(me.accessToken)).send({ status: 'pending' });
+  await api().delete(`/api/items/${itemId}`).set(auth(me.accessToken));
+  assert.deepEqual(subjectsFor(email, mark), [
+    'You reported "Red umbrella" as found',
+    'You updated "Red umbrella"',
+    '"Red umbrella" marked as resolved',
+    '"Red umbrella" reopened',
+    'You deleted "Red umbrella"',
+  ]);
+  assert.match(outbox.find((m) => m.subject === 'You updated "Red umbrella"').text, /You changed: location/);
+
+  mark = outbox.length;
+  const finder = await signup('mailfinder');
+  const found = await reportItem(finder.accessToken, { title: 'Green notebook', description: 'Spiral notebook with chemistry notes' });
+  await api()
+    .post(`/api/items/${found.body.item._id}/claim-request`)
+    .set(auth(me.accessToken))
+    .send({ message: 'My name is on the first page' });
+  assert.ok(subjectsFor(email, mark).includes('Your claim for "Green notebook" was sent'));
+
+  mark = outbox.length;
+  await api().patch('/api/profile').set(auth(me.accessToken)).send({ username: 'mailer2' });
+  const pw = await api()
+    .post('/api/profile/password')
+    .set(auth(me.accessToken))
+    .send({ currentPassword: 'password123', newPassword: 'password456' });
+  await api().post('/api/logout-all').set(auth(pw.body.accessToken));
+  assert.deepEqual(subjectsFor(email, mark), [
+    'Your username was changed',
+    'Your CampusFound password was changed',
+    'You were signed out of all devices',
+  ]);
+
+  // Opting out stops activity emails but never security notices
+  const login = await api().post('/api/login').send({ email, password: 'password456' });
+  const optOut = await api().patch('/api/profile').set(auth(login.body.accessToken)).send({ emailActivity: false });
+  assert.equal(optOut.body.user.emailActivity, false);
+  mark = outbox.length;
+  await reportItem(login.body.accessToken, { title: 'Blue scarf', description: 'Woollen scarf left in the auditorium' });
+  await api().post('/api/logout-all').set(auth(login.body.accessToken));
+  assert.deepEqual(subjectsFor(email, mark), ['You were signed out of all devices']);
+});

@@ -1,232 +1,56 @@
-// import { useState } from 'react';
-// import { useNavigate } from 'react-router-dom';
-// import { addItemAPI } from '../api/itemApi.js';
-// import { useAuth } from '../context/AuthContext.jsx';
-// import { toast } from 'react-toastify';
-
-// export default function AddItem() {
-//   const [formData, setFormData] = useState({
-//     type: 'lost',
-//     title: '',
-//     description: '',
-//     category: '',
-//     location: '',
-//     images: [],
-//     status: 'pending',
-//   });
-
-//   const { user } = useAuth();
-//   const navigate = useNavigate();
-
-//   const handleChange = (e) => {
-//     setFormData((prev) => ({
-//       ...prev,
-//       [e.target.name]: e.target.value,
-//     }));
-//   };
-
-//   const handleSubmit = async (e) => {
-//     e.preventDefault();
-
-//     if (!user) {
-//       toast.error('Please login to report an item');
-//       navigate('/login');
-//       return;
-//     }
-
-//     try {
-//       await addItemAPI(formData);
-//       toast.success('Item reported successfully!');
-//       navigate('/dashboard');
-//     } catch (err) {
-//       console.error('Error reporting item:', err);
-
-//       if (err.response && err.response.status === 401) {
-//         toast.error('Unauthorized! Please login to report items.');
-//         navigate('/login');
-//       } else {
-//         toast.error('Failed to report item. Please try again.');
-//       }
-//     }
-//   };
-
-//   return (
-//     <div className="min-h-screen bg-gray-50 dark:bg-black py-12 px-6 text-gray-900 dark:text-gray-100">
-//       <div className="max-w-xl mx-auto bg-white dark:bg-[#161b22] p-8 rounded shadow border border-gray-200 dark:border-gray-700">
-//         <h1 className="text-2xl font-bold mb-6 text-center">Report Lost / Found Item</h1>
-//         <form onSubmit={handleSubmit} className="space-y-4">
-          
-//           <select
-//             name="type"
-//             value={formData.type}
-//             onChange={handleChange}
-//             className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-//           >
-//             <option value="lost">Lost</option>
-//             <option value="found">Found</option>
-//           </select>
-
-//           <input
-//             type="text"
-//             name="title"
-//             placeholder="Title"
-//             value={formData.title}
-//             onChange={handleChange}
-//             className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-//             required
-//           />
-
-//           <textarea
-//             name="description"
-//             placeholder="Description"
-//             value={formData.description}
-//             onChange={handleChange}
-//             className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-//             required
-//           />
-
-//           <input
-//             type="text"
-//             name="category"
-//             placeholder="Category"
-//             value={formData.category}
-//             onChange={handleChange}
-//             className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-//           />
-
-//           <input
-//             type="text"
-//             name="location"
-//             placeholder="Location"
-//             value={formData.location}
-//             onChange={handleChange}
-//             className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-//           />
-
-//           <button
-//             type="submit"
-//             className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded transition"
-//           >
-//             Submit
-//           </button>
-//         </form>
-//       </div>
-//     </div>
-//   );
-// }
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { motion } from 'motion/react';
+import { toast } from 'sonner';
 import { addItemAPI } from '../api/itemApi.js';
-import { useAuth } from '../context/AuthContext.jsx';
-import { toast } from 'react-toastify';
+import { errorMessage, fieldErrors } from '../api/client.js';
+import ItemForm from '../components/ItemForm.jsx';
+import Loader from '../components/Loader.jsx';
+import useMeta from '../lib/useMeta.js';
+import { fadeUp, stagger } from '../lib/motion.js';
 
 export default function AddItem() {
-  const [formData, setFormData] = useState({
-    type: 'lost',
-    title: '',
-    description: '',
-    category: '',
-    location: '',
-    images: [],
-    status: 'pending',
-  });
-
-  const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const meta = useMeta();
 
-  const handleChange = (e) => {
-    setFormData((prev) => ({
-      ...prev,
-      [e.target.name]: e.target.value,
-    }));
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!user) {
-      toast.error('Please login to report an item');
-      navigate('/login');
-      return;
-    }
-
+  const handleSubmit = async (fields, images) => {
     try {
-      await addItemAPI(formData);
-      toast.success('Item reported successfully!');
-      navigate('/dashboard');
-    } catch (err) {
-      console.error('Error reporting item:', err);
-
-      if (err.response && err.response.status === 401) {
-        toast.error('Unauthorized! Please login to report items.');
-        navigate('/login');
+      const { item, matches = [] } = await addItemAPI(fields, images);
+      if (matches.length) {
+        toast.success('Item reported!', {
+          description: `We found ${matches.length} possible ${matches.length === 1 ? 'match' : 'matches'}. Take a look below.`,
+        });
       } else {
-        toast.error('Failed to report item. Please try again.');
+        toast.success('Item reported!', { description: 'We’ll email you if a matching item turns up.' });
       }
+      // The detail page lists the matches for the owner
+      navigate(`/items/${item._id}`, { replace: true });
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to report item. Please try again.'));
+      return fieldErrors(err);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-black py-12 px-6 text-gray-900 dark:text-gray-100">
-      <div className="max-w-xl mx-auto bg-white dark:bg-[#161b22] p-8 rounded shadow border border-gray-200 dark:border-gray-700">
-        <h1 className="text-2xl font-bold mb-6 text-center">Report Lost / Found Item</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          
-          <select
-            name="type"
-            value={formData.type}
-            onChange={handleChange}
-            className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-          >
-            <option value="lost">Lost</option>
-            <option value="found">Found</option>
-          </select>
-
-          <input
-            type="text"
-            name="title"
-            placeholder="Title"
-            value={formData.title}
-            onChange={handleChange}
-            className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-            required
+    <motion.main variants={stagger(0.08)} initial="hidden" animate="show" className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
+      <motion.div variants={fadeUp} className="mb-8">
+        <h1 className="text-4xl font-bold">Report an item</h1>
+        <p className="mt-2 text-muted max-w-xl">
+          Lost something, or found something that isn’t yours? Add it here and we’ll help connect it with its owner.
+        </p>
+      </motion.div>
+      <motion.div variants={fadeUp} className="card p-6 sm:p-8">
+        {meta ? (
+          <ItemForm
+            initialType={searchParams.get('type')}
+            uploadsEnabled={meta.uploadsEnabled}
+            submitLabel="Submit report"
+            onSubmit={handleSubmit}
           />
-
-          <textarea
-            name="description"
-            placeholder="Description"
-            value={formData.description}
-            onChange={handleChange}
-            className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-            required
-          />
-
-          <input
-            type="text"
-            name="category"
-            placeholder="Category"
-            value={formData.category}
-            onChange={handleChange}
-            className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-          />
-
-          <input
-            type="text"
-            name="location"
-            placeholder="Location"
-            value={formData.location}
-            onChange={handleChange}
-            className="w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-[#0d1117] text-gray-900 dark:text-gray-100 px-3 py-2 rounded"
-          />
-
-          <button
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded transition"
-          >
-            Submit
-          </button>
-        </form>
-      </div>
-    </div>
+        ) : (
+          <Loader />
+        )}
+      </motion.div>
+    </motion.main>
   );
-} 
+}

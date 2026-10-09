@@ -1,32 +1,9 @@
-import express from 'express'
-import dotenv from 'dotenv'
+import { config } from './config.js'
 import connectDB from './db/connect.db.js'
-import cors from 'cors'
-import userRoutes from './routes/user.route.js' 
-import itemRoutes from './routes/item.route.js'
-import protectedRoute from './routes/protected.routes.js'
-import errorHandlingMiddleware from './middlewares/errorHandler.middleware.js'
-import adminRoutes from './routes/admin.route.js'
-dotenv.config()
-connectDB()
+import app from './app.js'
 
-const app = express()
-const PORT = process.env.PORT || 8080
+await connectDB()
 
-
-app.use(cors())
-app.use(express.json())
-
-app.use('/api', userRoutes);
-app.use('/api', itemRoutes);
-app.use('/api', protectedRoute);
-app.use('/api/admin', adminRoutes);
-
-
-
-
-app.listen(PORT,()=>{
-    console.log(`server starting on ${PORT}`);
+app.listen(config.port, () => {
+    console.log(`Server listening on port ${config.port}`);
 })
-
-app.use(errorHandlingMiddleware);

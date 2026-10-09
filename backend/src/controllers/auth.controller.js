@@ -1,192 +1,141 @@
 import bcrypt from "bcryptjs";
-import { User } from "../models/user.model.js";
-import { generateTokens } from "../utils/jwt.utils.js";
-import { sendEmail } from "../utils/forgotMail.utils.js";
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-// Login function
+import { User } from "../models/user.model.js";
+import { config } from '../config.js';
+import { hashToken, issueSession, publicUser } from "../utils/jwt.utils.js";
+import { sendPasswordChangedMail, sendPasswordResetMail, sendWelcomeMail } from "../utils/mail.utils.js";
+
+// Case-insensitive match so accounts created before emails were lowercased still work
+const CASE_INSENSITIVE = { locale: 'en', strength: 2 };
+const findByEmail = (email) => User.findOne({ email }).collation(CASE_INSENSITIVE);
+
+const INVALID_CREDENTIALS = "Invalid email or password";
+const RESET_SENT = "If an account exists for that email, a password reset link has been sent";
+
 export const login = async (req, res) => {
   const { email, password } = req.body;
 
-  try {
-    // Find user by email
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    // Compare password
-    const isMatch = await bcrypt.compare(password, user.password);  
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-    // Generate tokens using utility
-    const { accessToken, refreshToken } = generateTokens(user);
-
-    // Optionally, save refreshToken to DB or send as HTTP-only cookie
-    // user.refreshTokens.push(refreshToken);
-    // await user.save();
-
-    // Send response with tokens and user info
-    res.json({
-      accessToken,
-      refreshToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        createdAt: user.createdAt,
-
-      }
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ message: "Internal server error" });
+  const user = await findByEmail(email).select('+password +refreshTokens');
+  // Same response for unknown email and wrong password so accounts can't be enumerated
+  const isMatch = user ? await bcrypt.compare(password, user.password) : false;
+  if (!isMatch) {
+    return res.status(401).json({ message: INVALID_CREDENTIALS });
   }
+
+  const { accessToken, refreshToken } = await issueSession(user);
+  res.json({ accessToken, refreshToken, user: publicUser(user) });
 };
 
-// Signup function
 export const signUp = async (req, res) => {
-  const { username, email, role, password } = req.body;
+  // req.body has been validated and contains only username, email and password
+  const { username, email, password } = req.body;
 
-  try {
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+  if (config.allowedEmailDomains.length) {
+    const domain = email.split('@')[1];
+    if (!config.allowedEmailDomains.includes(domain)) {
+      return res.status(400).json({
+        message: `Please sign up with your campus email (${config.allowedEmailDomains.map((d) => '@' + d).join(', ')})`,
+      });
     }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = new User({
-      username,
-      email,
-      role: role || "user",
-      password: hashedPassword,
-    });
-
-    await user.save();
-
-    // Generate tokens for the new user
-    const { accessToken, refreshToken } = generateTokens(user);
-
-    res.status(201).json({
-      message: "User registered successfully",
-      accessToken,
-      refreshToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    console.error("Signup error:", error);
-    res.status(500).json({ message: "Internal server error" });
   }
-}
 
+  const [emailTaken, usernameTaken] = await Promise.all([
+    findByEmail(email),
+    User.findOne({ username }).collation(CASE_INSENSITIVE),
+  ]);
+  if (emailTaken) {
+    return res.status(409).json({ message: "An account with this email already exists" });
+  }
+  if (usernameTaken) {
+    return res.status(409).json({ message: "This username is already taken" });
+  }
+
+  const user = new User({
+    username,
+    email,
+    role: "user",
+    password: await bcrypt.hash(password, 10),
+  });
+
+  const { accessToken, refreshToken } = await issueSession(user);
+  sendWelcomeMail(user);
+  res.status(201).json({
+    message: "User registered successfully",
+    accessToken,
+    refreshToken,
+    user: publicUser(user),
+  });
+};
 
 export const logout = async (req, res) => {
-  const { userId, refreshToken } = req.body;
-
-  try {
-    // Remove the refresh token from the user's record
-    await User.findByIdAndUpdate(
-      userId,
-      { $pull: { refreshTokens: refreshToken } },
-      { new: true }
+  const { refreshToken } = req.body;
+  if (refreshToken) {
+    await User.updateOne(
+      { refreshTokens: hashToken(refreshToken) },
+      { $pull: { refreshTokens: hashToken(refreshToken) } }
     );
-
-    res.status(200).json({ message: "Logged out successfully" });
-  } catch (error) {
-    console.error("Logout error:", error);
-    res.status(500).json({ message: "Internal server error" });
   }
-}
-
+  res.status(200).json({ message: "Logged out successfully" });
+};
 
 export const forgotPassword = async (req, res) => {
-  const { email } = req.body;
+  const user = await findByEmail(req.body.email);
 
-  try {
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Generate reset token
+  if (user) {
     const resetToken = crypto.randomBytes(32).toString('hex');
-
-    // Ideally store hashed token in DB with expiry, but for quick use:
-    user.resetToken = resetToken;
-    user.resetTokenExpiry = Date.now() + 3600000; // 1 hour
+    user.resetToken = hashToken(resetToken);
+    user.resetTokenExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
     await user.save();
 
-    // Generate reset link
-    const resetLink = `http://localhost:5173/reset-password/${resetToken}`;
-
-    // Send Email
-    await sendEmail({
-      to: email,
-      subject: 'Password Reset - CampusFound',
-      text: `You requested a password reset. Click the link: ${resetLink}`,
-      html: `<p>You requested a password reset.</p><p>Click here: <a href="${resetLink}">${resetLink}</a></p>`
-    });
-
-    res.status(200).json({ message: "Password reset link sent to your email" });
-  } catch (error) {
-    console.error("Forgot password error:", error);
-    res.status(500).json({ message: "Internal server error" });
+    sendPasswordResetMail(user.email, `${config.frontendUrl}/reset-password/${resetToken}`);
   }
+
+  // Always the same response so the endpoint can't be used to discover accounts
+  res.status(200).json({ message: RESET_SENT });
 };
 
 export const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
-  try {
-    const user = await User.findOne({ resetToken: token, resetTokenExpiry: { $gt: Date.now() } });
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired reset token" });
-    }
-    // Hash the new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
-    user.resetToken = undefined; // Clear reset token
-    user.resetTokenExpiry = undefined; // Clear expiry
-    await user.save();
-    res.status(200).json({ message: "Password reset successfully" });
-  } catch (error) {
-    console.error("Reset password error:", error);
-    res.status(500).json({ message: "Internal server error" });
+  const user = await User.findOne({
+    resetToken: hashToken(token),
+    resetTokenExpiry: { $gt: Date.now() },
+  });
+  if (!user) {
+    return res.status(400).json({ message: "This reset link is invalid or has expired" });
   }
-}
 
+  user.password = await bcrypt.hash(newPassword, 10);
+  user.resetToken = null;
+  user.resetTokenExpiry = null;
+  // Sign out every existing session after a password change
+  user.refreshTokens = [];
+  await user.save();
+  sendPasswordChangedMail(user, 'reset');
+
+  res.status(200).json({ message: "Password reset successfully. You can now sign in." });
+};
 
 export const refreshTokenController = async (req, res) => {
   const { refreshToken } = req.body;
-  
-  if (!refreshToken) {
-    return res.status(401).json({ message: 'No refresh token provided' });
-  }
 
+  let payload;
   try {
-    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(payload.id);
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
-
-    return res.json({
-      accessToken,
-      refreshToken: newRefreshToken
-    });
-
-  } catch (err) {
-    console.error('Refresh token error:', err);
-    return res.status(403).json({ message: 'Invalid or expired refresh token' });
+    payload = jwt.verify(refreshToken, config.jwt.refreshSecret);
+  } catch {
+    return res.status(401).json({ message: 'Invalid or expired refresh token' });
   }
+
+  const hashed = hashToken(refreshToken);
+  const user = await User.findById(payload.id).select('+refreshTokens');
+  if (!user || !user.refreshTokens.includes(hashed)) {
+    return res.status(401).json({ message: 'Invalid or expired refresh token' });
+  }
+
+  // Rotate: the used refresh token is revoked and replaced
+  user.refreshTokens = user.refreshTokens.filter((t) => t !== hashed);
+  const tokens = await issueSession(user);
+
+  res.json({ ...tokens, user: publicUser(user) });
 };
