@@ -1,6 +1,6 @@
 import { Router } from "express";
 import rateLimit from 'express-rate-limit';
-import { login, signUp, logout, forgotPassword, resetPassword, refreshTokenController } from "../controllers/auth.controller.js";
+import { login, signUp, logout, forgotPassword, resetPassword, refreshTokenController, googleLogin } from "../controllers/auth.controller.js";
 import { getProfile, updateProfile, changePassword, logoutAll } from "../controllers/user.controller.js";
 import authMiddleware from "../middlewares/auth.middleware.js";
 import validate from "../middlewares/validate.middleware.js";
@@ -12,6 +12,7 @@ import {
     signupSchema,
     updateProfileSchema,
     changePasswordSchema,
+    googleLoginSchema,
 } from "../validators.js";
 
 const router = Router();
@@ -31,6 +32,7 @@ const resetLimiter = limiter(5, 60, 'Too many password reset requests. Please tr
 
 router.post("/login", authLimiter, validate(loginSchema), login);
 router.post("/signup", authLimiter, validate(signupSchema), signUp);
+router.post("/auth/google", authLimiter, validate(googleLoginSchema), googleLogin);
 router.post("/logout", logout);
 router.post("/forgot-password", resetLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post("/reset-password", resetLimiter, validate(resetPasswordSchema), resetPassword);

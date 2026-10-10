@@ -7,7 +7,7 @@ export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8080/a
 const api = axios.create({ baseURL: API_URL });
 
 // Requests that must never trigger a token refresh
-const AUTH_ENDPOINTS = ['/login', '/signup', '/refresh', '/logout', '/forgot-password', '/reset-password'];
+const AUTH_ENDPOINTS = ['/login', '/signup', '/auth/google', '/refresh', '/logout', '/forgot-password', '/reset-password'];
 
 api.interceptors.request.use((config) => {
   const session = getSession();

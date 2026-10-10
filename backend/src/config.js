@@ -41,6 +41,10 @@ export const config = {
     // Sender address; for Brevo it must be a sender verified in your Brevo account
     from: process.env.MAIL_FROM || process.env.EMAIL_USER,
   },
+  google: {
+    // OAuth client ID from Google Cloud Console (public; no secret needed for Sign in with Google)
+    clientId: process.env.GOOGLE_CLIENT_ID,
+  },
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,
     apiKey: process.env.CLOUDINARY_API_KEY,

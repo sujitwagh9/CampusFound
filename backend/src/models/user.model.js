@@ -30,6 +30,17 @@ const userSchema = new mongoose.Schema(
             required: true,
             select: false
         },
+        // False for accounts created with Google until the user sets a password
+        passwordSet: {
+            type: Boolean,
+            default: true
+        },
+        // Google account ID ("sub"), set when the user signs in with Google
+        googleId: {
+            type: String,
+            unique: true,
+            sparse: true
+        },
         // SHA-256 hashes of the currently valid refresh tokens
         refreshTokens: {
             type: [String],

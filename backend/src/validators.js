@@ -92,7 +92,13 @@ export const updateProfileSchema = z
   .partial()
   .refine((d) => Object.keys(d).length > 0, 'Nothing to update');
 
+// currentPassword is checked in the controller: accounts created with Google
+// don't have one yet and can set their first password without it
 export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, 'Enter your current password'),
+  currentPassword: z.string().optional(),
   newPassword: password,
+});
+
+export const googleLoginSchema = z.object({
+  credential: z.string().min(20, 'Missing Google credential'),
 });

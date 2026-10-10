@@ -372,7 +372,8 @@ function UsernameForm({ profile, onSaved }) {
   );
 }
 
-function PasswordForm({ onChanged }) {
+// hasPassword=false for accounts created with Google: they set a first password without a current one
+function PasswordForm({ hasPassword, onChanged }) {
   const [form, setForm] = useState({ current: '', next: '', confirm: '' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -385,7 +386,7 @@ function PasswordForm({ onChanged }) {
   const submit = async (e) => {
     e.preventDefault();
     const found = {};
-    if (!form.current) found.current = 'Enter your current password';
+    if (hasPassword && !form.current) found.current = 'Enter your current password';
     const issues = passwordIssues(form.next);
     if (issues.length) found.next = `Password needs ${issues.join(', ')}`;
     if (form.next !== form.confirm) found.confirm = 'Passwords do not match';
@@ -394,10 +395,10 @@ function PasswordForm({ onChanged }) {
 
     setSaving(true);
     try {
-      const res = await changePasswordAPI(form.current, form.next);
+      const res = await changePasswordAPI(hasPassword ? form.current : undefined, form.next);
       onChanged(res);
       setForm({ current: '', next: '', confirm: '' });
-      toast.success('Password changed', { description: 'Other devices have been signed out.' });
+      toast.success(hasPassword ? 'Password changed' : 'Password set', { description: hasPassword ? 'Other devices have been signed out.' : 'You can now also sign in with your email and password.' });
     } catch (err) {
       const fe = fieldErrors(err);
       setErrors({ current: fe.currentPassword, next: fe.newPassword });
@@ -409,9 +410,11 @@ function PasswordForm({ onChanged }) {
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
-      <FormField label="Current password" error={errors.current}>
-        {(props) => <PasswordInput {...props} autoComplete="current-password" value={form.current} onChange={set('current')} />}
-      </FormField>
+      {hasPassword && (
+        <FormField label="Current password" error={errors.current}>
+          {(props) => <PasswordInput {...props} autoComplete="current-password" value={form.current} onChange={set('current')} />}
+        </FormField>
+      )}
       <div className="grid sm:grid-cols-2 gap-4">
         <FormField label="New password" error={errors.next}>
           {(props) => (
@@ -427,7 +430,7 @@ function PasswordForm({ onChanged }) {
       </div>
       <div className="flex justify-end">
         <Button type="submit" variant="ink" loading={saving}>
-          Change password
+          {hasPassword ? 'Change password' : 'Set password'}
         </Button>
       </div>
     </form>
@@ -555,8 +558,22 @@ export default function Profile() {
             />
           </SettingsCard>
 
-          <SettingsCard icon={KeyRound} title="Password" description="Changing it signs you out on your other devices.">
-            <PasswordForm onChanged={(res) => login(res)} />
+          <SettingsCard
+            icon={KeyRound}
+            title={profile.hasPassword ? 'Password' : 'Set a password'}
+            description={
+              profile.hasPassword
+                ? `Changing it signs you out on your other devices.${profile.googleLinked ? ' You can also keep signing in with Google.' : ''}`
+                : 'You sign in with Google. Add a password if you also want to sign in with your email.'
+            }
+          >
+            <PasswordForm
+              hasPassword={profile.hasPassword !== false}
+              onChanged={(res) => {
+                login(res);
+                setProfile((p) => ({ ...p, ...res.user }));
+              }}
+            />
           </SettingsCard>
 
           <SettingsCard icon={Mail} title="Email notifications" description={`Sent to ${profile.email}`}>

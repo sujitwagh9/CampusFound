@@ -12,11 +12,13 @@ before(async () => {
   process.env.MONGODB_URL = mongod.getUri();
   process.env.JWT_SECRET = 'test-secret';
   process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
+  process.env.GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
   // Imported after the environment is set, since config reads it on load
   app = (await import('../src/app.js')).default;
   User = (await import('../src/models/user.model.js')).User;
   await mongoose.connect(process.env.MONGODB_URL);
   await mongoose.model('Item').syncIndexes();
+  await mongoose.model('User').syncIndexes();
 });
 
 after(async () => {
@@ -444,4 +446,78 @@ test('approving a claim closes the claimant’s own lost report', async () => {
     .set(auth(other.accessToken))
     .send({ message: 'It has my initials on the tag', lostItemId: lost2.body.item._id });
   assert.equal(claim3.body.claim.lostItem, null);
+});
+
+test('sign in with Google: create, sign in again, link safely, reject bad tokens', async () => {
+  const { google } = await import('../src/services/google.service.js');
+  const { outbox } = await import('../src/utils/mail.utils.js');
+  const original = google.verifyIdToken;
+  // Fake Google: the "token" is just a key into these profiles
+  const profiles = {
+    'token-new-user-0000000000': { sub: 'g-111', email: 'Asha.Rao@campus.edu', email_verified: true, name: 'Asha Rao' },
+    'token-existing-00000000000': { sub: 'g-222', email: 'prelinked@campus.edu', email_verified: true, name: 'Pre Linked' },
+    'token-unverified-000000000': { sub: 'g-333', email: 'nover@campus.edu', email_verified: false, name: 'No Ver' },
+  };
+  google.verifyIdToken = async (t) => {
+    if (!profiles[t]) throw new Error('invalid token');
+    return profiles[t];
+  };
+  try {
+    // New user
+    const first = await api().post('/api/auth/google').send({ credential: 'token-new-user-0000000000' });
+    assert.equal(first.status, 201);
+    assert.equal(first.body.created, true);
+    assert.equal(first.body.user.username, 'asha.rao');
+    assert.equal(first.body.user.email, 'asha.rao@campus.edu');
+    assert.equal(first.body.user.hasPassword, false);
+    assert.equal(first.body.user.googleLinked, true);
+    assert.equal(first.body.user.role, 'user');
+
+    // Same Google account again: signs in, no duplicate
+    const again = await api().post('/api/auth/google').send({ credential: 'token-new-user-0000000000' });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.user.id, first.body.user.id);
+
+    // Google users can set a first password without a current one
+    const set = await api()
+      .post('/api/profile/password')
+      .set(auth(again.body.accessToken))
+      .send({ newPassword: 'mypassword1' });
+    assert.equal(set.status, 200);
+    assert.equal(set.body.user.hasPassword, true);
+    const pwLogin = await api().post('/api/login').send({ email: 'asha.rao@campus.edu', password: 'mypassword1' });
+    assert.equal(pwLogin.status, 200);
+
+    // Existing password account (possibly registered by someone else): linking
+    // clears the old password and ends its sessions
+    const squatter = await signup('prelinked');
+    const mark = outbox.length;
+    const linked = await api().post('/api/auth/google').send({ credential: 'token-existing-00000000000' });
+    assert.equal(linked.status, 200);
+    assert.equal(linked.body.linked, true);
+    assert.equal(linked.body.user.id, squatter.user.id);
+    const oldPassword = await api().post('/api/login').send({ email: 'prelinked@campus.edu', password: 'password123' });
+    assert.equal(oldPassword.status, 401, 'old password no longer works');
+    const oldSession = await api().post('/api/refresh').send({ refreshToken: squatter.refreshToken });
+    assert.equal(oldSession.status, 401, 'old sessions are revoked');
+    assert.ok(outbox.slice(mark).some((m) => m.subject === 'Google sign-in was added to your account'));
+
+    // Unverified Google email and forged tokens are refused
+    assert.equal((await api().post('/api/auth/google').send({ credential: 'token-unverified-000000000' })).status, 401);
+    assert.equal((await api().post('/api/auth/google').send({ credential: 'forged-token-xxxxxxxxxxxx' })).status, 401);
+
+    // Password accounts still need their current password to change it
+    const needsCurrent = await api()
+      .post('/api/profile/password')
+      .set(auth(pwLogin.body.accessToken))
+      .send({ newPassword: 'another123' });
+    assert.equal(needsCurrent.status, 400);
+  } finally {
+    google.verifyIdToken = original;
+  }
+});
+
+test('the real verifier rejects tokens that are not from Google', async () => {
+  const { google } = await import('../src/services/google.service.js');
+  await assert.rejects(google.verifyIdToken('not-a-real-google-token'));
 });

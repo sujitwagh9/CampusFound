@@ -56,14 +56,20 @@ export const changePassword = async (req, res) => {
     if (!user) {
         return res.status(404).json({ message: 'User not found' });
     }
-    if (!(await bcrypt.compare(currentPassword, user.password))) {
-        return res.status(400).json({ message: 'Current password is incorrect', errors: [{ field: 'currentPassword', message: 'Current password is incorrect' }] });
+    if (user.passwordSet !== false) {
+        if (!currentPassword) {
+            return res.status(400).json({ message: 'Enter your current password', errors: [{ field: 'currentPassword', message: 'Enter your current password' }] });
+        }
+        if (!(await bcrypt.compare(currentPassword, user.password))) {
+            return res.status(400).json({ message: 'Current password is incorrect', errors: [{ field: 'currentPassword', message: 'Current password is incorrect' }] });
+        }
     }
     if (await bcrypt.compare(newPassword, user.password)) {
         return res.status(400).json({ message: 'Choose a password different from your current one', errors: [{ field: 'newPassword', message: 'Choose a different password' }] });
     }
 
     user.password = await bcrypt.hash(newPassword, 10);
+    user.passwordSet = true;
     // Sign out every other session; this device gets a fresh one
     user.refreshTokens = [];
     const tokens = await issueSession(user);
