@@ -30,6 +30,7 @@ app.get('/api/meta', (req, res) => {
         uploadsEnabled: cloudinaryEnabled,
         maxImages: MAX_IMAGES,
         allowedEmailDomains: config.allowedEmailDomains,
+        googleClientId: config.google.clientId || null,
     });
 });
 

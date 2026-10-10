@@ -29,6 +29,9 @@ services:
         sync: false
       - key: MAIL_FROM
         sync: false
+      # Optional: "Continue with Google" (OAuth Client ID from Google Cloud Console)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
       # Optional: photo uploads
       - key: CLOUDINARY_CLOUD_NAME
         sync: false

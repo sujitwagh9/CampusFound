@@ -4,13 +4,19 @@ import jwt from 'jsonwebtoken';
 import { User } from "../models/user.model.js";
 import { config } from '../config.js';
 import { hashToken, issueSession, publicUser } from "../utils/jwt.utils.js";
-import { sendPasswordChangedMail, sendPasswordResetMail, sendWelcomeMail } from "../utils/mail.utils.js";
+import { sendGoogleLinkedMail, sendPasswordChangedMail, sendPasswordResetMail, sendWelcomeMail } from "../utils/mail.utils.js";
+import { google } from "../services/google.service.js";
 
 // Case-insensitive match so accounts created before emails were lowercased still work
 const CASE_INSENSITIVE = { locale: 'en', strength: 2 };
 const findByEmail = (email) => User.findOne({ email }).collation(CASE_INSENSITIVE);
 
 const INVALID_CREDENTIALS = "Invalid email or password";
+
+const emailDomainAllowed = (email) =>
+  !config.allowedEmailDomains.length || config.allowedEmailDomains.includes(email.split('@')[1].toLowerCase());
+const campusEmailMessage = () =>
+  `Please use your campus email (${config.allowedEmailDomains.map((d) => '@' + d).join(', ')})`;
 const RESET_SENT = "If an account exists for that email, a password reset link has been sent";
 
 export const login = async (req, res) => {
@@ -31,13 +37,8 @@ export const signUp = async (req, res) => {
   // req.body has been validated and contains only username, email and password
   const { username, email, password } = req.body;
 
-  if (config.allowedEmailDomains.length) {
-    const domain = email.split('@')[1];
-    if (!config.allowedEmailDomains.includes(domain)) {
-      return res.status(400).json({
-        message: `Please sign up with your campus email (${config.allowedEmailDomains.map((d) => '@' + d).join(', ')})`,
-      });
-    }
+  if (!emailDomainAllowed(email)) {
+    return res.status(400).json({ message: campusEmailMessage() });
   }
 
   const [emailTaken, usernameTaken] = await Promise.all([
@@ -66,6 +67,86 @@ export const signUp = async (req, res) => {
     refreshToken,
     user: publicUser(user),
   });
+};
+
+// A free username based on the Google profile, e.g. "Sujit Wagh" -> "sujit.wagh", "sujit.wagh2", ...
+const usernameFor = async (profile) => {
+  const base =
+    (profile.name || profile.email.split('@')[0])
+      .normalize('NFKD')
+      .replace(/[^\w\s.-]/g, '')
+      .trim()
+      .replace(/\s+/g, '.')
+      .toLowerCase()
+      .slice(0, 24) || 'user';
+  const padded = base.length < 3 ? `${base}user` : base;
+  for (let n = 0; n < 50; n++) {
+    const candidate = n ? `${padded}${n + 1}` : padded;
+    if (!(await User.exists({ username: candidate }).collation(CASE_INSENSITIVE))) return candidate;
+  }
+  return `${padded}${crypto.randomInt(1000, 9999)}`;
+};
+
+/**
+ * Sign in with Google. The browser gets an ID token from Google; we verify it
+ * here, then sign in the matching account, link it to an existing account
+ * with the same (Google-verified) email, or create a new one.
+ */
+export const googleLogin = async (req, res) => {
+  if (!config.google.clientId) {
+    return res.status(503).json({ message: 'Google sign-in is not set up on this server' });
+  }
+
+  let profile;
+  try {
+    profile = await google.verifyIdToken(req.body.credential);
+  } catch {
+    return res.status(401).json({ message: 'Google sign-in failed. Please try again.' });
+  }
+  if (!profile?.sub || !profile.email || !profile.email_verified) {
+    return res.status(401).json({ message: 'Your Google account email is not verified' });
+  }
+
+  const email = profile.email.toLowerCase();
+  let user = await User.findOne({ googleId: profile.sub }).select('+refreshTokens');
+  let created = false;
+  let linked = false;
+
+  if (!user) {
+    user = await findByEmail(email).select('+refreshTokens');
+    if (user) {
+      // Google has just proven who owns this email. Password signups aren't
+      // email-verified, so someone else could have registered it first and
+      // still know its password: clear the password and end old sessions so
+      // only the real owner keeps access. They can set a new password later.
+      user.googleId = profile.sub;
+      if (user.passwordSet !== false) {
+        user.password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+        user.passwordSet = false;
+      }
+      user.refreshTokens = [];
+      linked = true;
+    } else {
+      if (!emailDomainAllowed(email)) {
+        return res.status(400).json({ message: campusEmailMessage() });
+      }
+      user = new User({
+        username: await usernameFor({ ...profile, email }),
+        email,
+        role: 'user',
+        googleId: profile.sub,
+        // Unusable random password until the user chooses one in their profile
+        password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+        passwordSet: false,
+      });
+      created = true;
+    }
+  }
+
+  const { accessToken, refreshToken } = await issueSession(user);
+  if (created) sendWelcomeMail(user);
+  if (linked) sendGoogleLinkedMail(user);
+  res.status(created ? 201 : 200).json({ accessToken, refreshToken, user: publicUser(user), created, linked });
 };
 
 export const logout = async (req, res) => {
@@ -107,6 +188,7 @@ export const resetPassword = async (req, res) => {
   }
 
   user.password = await bcrypt.hash(newPassword, 10);
+  user.passwordSet = true;
   user.resetToken = null;
   user.resetTokenExpiry = null;
   // Sign out every existing session after a password change

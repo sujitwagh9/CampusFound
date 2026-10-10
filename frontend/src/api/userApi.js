@@ -4,6 +4,9 @@ export const loginAPI = async (credentials) => (await api.post('/login', credent
 
 export const signupAPI = async (details) => (await api.post('/signup', details)).data;
 
+// credential: the ID token from Google's sign-in button
+export const googleLoginAPI = async (credential) => (await api.post('/auth/google', { credential })).data;
+
 export const logoutAPI = async (refreshToken) => (await api.post('/logout', { refreshToken })).data;
 
 export const forgotPasswordAPI = async (email) => (await api.post('/forgot-password', { email })).data;

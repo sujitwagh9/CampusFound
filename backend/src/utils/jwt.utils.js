@@ -38,5 +38,7 @@ export const publicUser = (user) => ({
   email: user.email,
   role: user.role,
   emailActivity: user.emailActivity !== false,
+  hasPassword: user.passwordSet !== false,
+  googleLinked: Boolean(user.googleId),
   createdAt: user.createdAt,
 });

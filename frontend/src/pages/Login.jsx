@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { loginAPI } from '../api/userApi.js';
 import { errorMessage } from '../api/client.js';
 import AuthCard from '../components/AuthCard.jsx';
+import GoogleSignIn from '../components/GoogleSignIn.jsx';
+import useGoogleLogin from '../lib/useGoogleLogin.js';
 import FormField, { PasswordInput, SubmitButton } from '../components/FormField.jsx';
 
 export default function Login() {
@@ -22,6 +24,9 @@ export default function Login() {
 
   const from = location.state?.from;
   const redirectTo = from ? `${from.pathname}${from.search || ''}` : null;
+
+  // Hooks must run before the early return below
+  const handleGoogle = useGoogleLogin({ redirectTo, setError, setSubmitting });
 
   if (user && !submitting) {
     return <Navigate to={redirectTo || '/explore'} replace />;
@@ -79,6 +84,8 @@ export default function Login() {
           Sign in
         </SubmitButton>
       </form>
+
+      <GoogleSignIn onCredential={handleGoogle} disabled={submitting} text={'signin_with'} />
     </AuthCard>
   );
 }

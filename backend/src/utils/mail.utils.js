@@ -163,6 +163,20 @@ export const sendSignedOutEverywhereMail = (user) =>
     footnote: SECURITY_FOOTNOTE,
   });
 
+export const sendGoogleLinkedMail = (user) =>
+  send({
+    to: user.email,
+    subject: 'Google sign-in was added to your account',
+    heading: 'Your account is now linked to Google',
+    lines: [
+      `Hi ${user.username}, you just signed in to CampusFound with your Google account for the first time, so we linked the two.`,
+      'For your security, your old password was cleared and any other sessions were signed out. Keep using “Continue with Google”, or set a new password from your profile.',
+    ],
+    details: [['When', new Date().toUTCString()]],
+    action: { label: 'Set a password', url: link('/profile') },
+    footnote: SECURITY_FOOTNOTE,
+  });
+
 export const sendUsernameChangedMail = (user, oldUsername) =>
   sendActivity(user, {
     subject: 'Your username was changed',

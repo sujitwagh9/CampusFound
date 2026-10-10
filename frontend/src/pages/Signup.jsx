@@ -6,6 +6,8 @@ import { errorMessage, fieldErrors } from '../api/client.js';
 import useMeta from '../lib/useMeta.js';
 import { passwordIssues } from '../lib/styles.js';
 import AuthCard from '../components/AuthCard.jsx';
+import GoogleSignIn from '../components/GoogleSignIn.jsx';
+import useGoogleLogin from '../lib/useGoogleLogin.js';
 import FormField, { PasswordInput, PasswordStrength, SubmitButton } from '../components/FormField.jsx';
 
 export default function Signup() {
@@ -21,6 +23,9 @@ export default function Signup() {
   const from = location.state?.from;
   const redirectTo = from ? `${from.pathname}${from.search || ''}` : '/explore';
   const domains = meta?.allowedEmailDomains || [];
+
+  // Hooks must run before the early return below
+  const handleGoogle = useGoogleLogin({ redirectTo, setError, setSubmitting });
 
   if (user && !submitting) {
     return <Navigate to={redirectTo} replace />;
@@ -105,6 +110,8 @@ export default function Signup() {
           Create account
         </SubmitButton>
       </form>
+
+      <GoogleSignIn onCredential={handleGoogle} disabled={submitting} text={'signup_with'} />
     </AuthCard>
   );
 }
